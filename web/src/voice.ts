@@ -103,7 +103,7 @@ async function loadBuffers(): Promise<void> {
         const id = `${want}/${key}_${i}`
         if (buffers.has(id)) return
         try {
-          const res = await fetch(`/audio/${want}/${key}_${i}.wav`)
+          const res = await fetch(`${import.meta.env.BASE_URL}audio/${want}/${key}_${i}.wav`)
           if (!res.ok) return
           const buf = await c.decodeAudioData(await res.arrayBuffer())
           buffers.set(id, buf)
@@ -243,7 +243,7 @@ async function loadShtrum(which: 'm' | 'f'): Promise<void> {
         const id = `shtrum_${which}/${key}_${i}`
         if (buffers.has(id)) return
         try {
-          const res = await fetch(`/audio/shtrum_${which}/${key}_${i}.wav`)
+          const res = await fetch(`${import.meta.env.BASE_URL}audio/shtrum_${which}/${key}_${i}.wav`)
           if (!res.ok) return
           buffers.set(id, await c.decodeAudioData(await res.arrayBuffer()))
         } catch {
@@ -318,7 +318,7 @@ async function loadWendy(): Promise<void> {
         const id = `wendy/${key}_${i}`
         if (buffers.has(id)) return
         try {
-          const res = await fetch(`/audio/wendy/${key}_${i}.wav`)
+          const res = await fetch(`${import.meta.env.BASE_URL}audio/wendy/${key}_${i}.wav`)
           if (!res.ok) return
           buffers.set(id, await c.decodeAudioData(await res.arrayBuffer()))
         } catch {
@@ -391,7 +391,7 @@ async function loadRoy(): Promise<void> {
         const id = `roy/${key}_${i}`
         if (buffers.has(id)) return
         try {
-          const res = await fetch(`/audio/roy/${key}_${i}.wav`)
+          const res = await fetch(`${import.meta.env.BASE_URL}audio/roy/${key}_${i}.wav`)
           if (!res.ok) return
           buffers.set(id, await c.decodeAudioData(await res.arrayBuffer()))
         } catch {

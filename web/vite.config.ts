@@ -20,6 +20,8 @@ function appVersion(): string {
 }
 
 export default defineConfig({
+  // для статики GitHub Pages сайт живёт по пути /<репо>/: сборка с VITE_BASE
+  base: process.env.VITE_BASE ?? '/',
   plugins: [react()],
   define: { __APP_VERSION__: JSON.stringify(appVersion()) },
   server: {
