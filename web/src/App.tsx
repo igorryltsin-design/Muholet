@@ -7,8 +7,10 @@ import { computeRunMetrics, navMetrics } from './metrics'
 import { localRun } from './localSim'
 import { canonicalScenarios, flyRollout, initPopulation, runGeneration, sampleGenerationScenario, sanitizeFly, scenarioLabel, synthFrameFromTel, type GenerationResult } from './swarm'
 import { trainLocal } from './trainLocal'
-import { setVoiceEnabled, setVoiceKind as applyVoiceKind, say, sayShtrum, warmShtrum, type VoiceKind } from './voice'
+import { setVoiceEnabled, setVoiceKind as applyVoiceKind, say, sayShtrum, sayWendy, sayRoy, warmShtrum, warmWendy, warmRoy, type VoiceKind } from './voice'
 import { planShtrum, type ShtrumLine, type ShtrumPlan } from './shtrum'
+import { planWendy, type WendyLine, type WendyPlan } from './wendy'
+import { royLine, type RoyKey } from './roy'
 import { exportCsv } from './lab/charts'
 import { resetLayout } from './ui'
 import { AppShell } from './shell/AppShell'
@@ -40,7 +42,7 @@ export type CmpRow = {
 
 const dist3 = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
-/** Точка кривой прогона: время, h_cv, отклонение от эталонного МПС. */
+/** Точка кривой прогона: время, h_cv, отклонение от эталонного ПН. */
 const framePoint = (fr: Frame) => ({ t: fr.t, zem: navMetrics(fr).zem, dev: fr.ghost ? dist3(fr.missile, fr.ghost) : null, rng: fr.range_m })
 /** Точка N_экв-диагностики кадра — графики адаптивности в лаборатории. */
 const neffPoint = (fr: Frame) => ({
@@ -118,8 +120,10 @@ export function App() {
   })
   // подпись на 3D-сцене: текущий эпизод обучения / поколение роя / демо
   const [sceneBadge, setSceneBadge] = useState<string | null>(null)
-  // кривая обучения роя: лучший промах по поколениям (прямо на 3D-сцене)
+  // кривая обучения роя: наименьшее сближение по поколениям (прямо на 3D-сцене)
   const [swarmCurve, setSwarmCurve] = useState<number[] | null>(null)
+  // индексы валидационных поколений в кривой эволюции (где считалось эталонное трио)
+  const [swarmValid, setSwarmValid] = useState<number[]>([])
   const [swarmInfo, setSwarmInfo] = useState<{ gen: number; bestMiss: number; avgFit: number; bio: number; pn: number; fits: number[]; geo: string; champion?: number } | null>(null)
   const [swarmCfg, setSwarmCfg] = useState({ size: 24, eliteK: 4, mutation: 0.25 })
   // дуэль: вердикт последнего прогона (из server-полей /api/run) и матрица «Ринг»
@@ -181,6 +185,12 @@ export function App() {
   const [humorOn, setHumorOn] = useState(savedVoice.humor === true)
   const [shtrumCaption, setShtrumCaption] = useState<{ text: string; he: boolean } | null>(null)
   const shtrumHideRef = useRef<number | null>(null)
+  // «Кобра» — муха-пилот самолёта-цели; говорит только в дуэли (её субтитр)
+  const [wendyCaption, setWendyCaption] = useState<{ text: string } | null>(null)
+  const wendyHideRef = useRef<number | null>(null)
+  // командир роя — комментирует ход эволюции (её субтитр)
+  const [royCaption, setRoyCaption] = useState<{ text: string } | null>(null)
+  const royHideRef = useRef<number | null>(null)
   // прогресс обучения для лаборатории
   const [trainProgress, setTrainProgress] = useState<{ ep: number; total: number } | null>(null)
   // настройки лаборатории: окно сглаживания и показ факта
@@ -205,6 +215,8 @@ export function App() {
     if (soundOn && humorOn) {
       warmShtrum('m')
       warmShtrum('f')
+      warmWendy()
+      warmRoy()
     }
     try {
       localStorage.setItem('muholet-sound', JSON.stringify({ on: soundOn, voice: voiceKind, humor: humorOn }))
@@ -384,11 +396,11 @@ export function App() {
       setScaling(d)
       const best = d.rows.reduce((a, b) => (b.miss_after < a.miss_after ? b : a), d.rows[0])
       setLog((rows) => [
-        `Scaling (${d.kind}): лучший промах ${best.miss_after} м у размера ${best.size} (${best.params.toLocaleString('ru')} параметров)`,
+        `Кривая масштабируемости (${d.kind}): наименьшее сближение ${best.miss_after} м у размера ${best.size} (${best.params.toLocaleString('ru')} параметров)`,
         ...rows,
       ].slice(0, 14))
     } catch {
-      setLog((rows) => ['Scaling-кривая — только на стенде.', ...rows].slice(0, 14))
+      setLog((rows) => ['Кривая масштабируемости — только на стенде.', ...rows].slice(0, 14))
     } finally {
       setScalingBusy(false)
     }
@@ -476,7 +488,7 @@ export function App() {
       setMapData(d)
       const wins = d.rows.filter((r) => r.advantage > 5).length
       setLog((rows) => [
-        `Карта преимуществ: муха точнее МПС в ${wins} из ${d.rows.length} ячеек (порог 5 м)`,
+        `Карта преимуществ: муха точнее ПН в ${wins} из ${d.rows.length} ячеек (порог 5 м)`,
         ...rows,
       ].slice(0, 14))
     } catch {
@@ -515,7 +527,7 @@ export function App() {
         startedAt: performance.now(),
         durationMs: Math.max(6000, Math.min(16000, maxPts * 40)),
       })
-      const SHORT: Record<string, string> = { pn: 'МПС', apn: 'МПС+а', pure: 'погоня', clos: '3 точки', stub: 'схема', full: 'полный', connectome: 'коннектом' }
+      const SHORT: Record<string, string> = { pn: 'ПН', apn: 'ПН+а', pure: 'погоня', clos: '3 точки', stub: 'схема', full: 'полный', connectome: 'коннектом' }
       setSceneBadge(`наложение · ${results.map((r) => SHORT[r.kind] ?? r.kind).join(' / ')}`)
       setLog((rows) => [`Наложение траекторий: ${results.length} на 3D-сцене, точнее — ${results[bestIdx].label}.`, ...rows].slice(0, 14))
     } catch (e) {
@@ -680,6 +692,24 @@ export function App() {
     setLog((rows) => [`${he ? '♂ Штруман' : '♀ Штрумана'}: ${line.text}`, ...rows].slice(0, 14))
   }
 
+  /** Реплика «Кобры» — тем же порядком: субтитр сразу, звук по своей очереди. */
+  const showWendy = (line: WendyLine) => {
+    if (wendyHideRef.current) window.clearTimeout(wendyHideRef.current)
+    setWendyCaption({ text: line.text })
+    wendyHideRef.current = window.setTimeout(() => setWendyCaption(null), 4000)
+    sayWendy(line.key, line.variant)
+    setLog((rows) => [`♀ Кобра: ${line.text}`, ...rows].slice(0, 14))
+  }
+
+  /** Реплика командира роя — тот же порядок: субтитр сразу, звук по очереди. */
+  const showRoy = (line: { key: RoyKey; variant: number; text: string }) => {
+    if (royHideRef.current) window.clearTimeout(royHideRef.current)
+    setRoyCaption({ text: line.text })
+    royHideRef.current = window.setTimeout(() => setRoyCaption(null), 4000)
+    sayRoy(line.key, line.variant)
+    setLog((rows) => [`♀ Командир роя: ${line.text}`, ...rows].slice(0, 14))
+  }
+
   const playFrames = async (
     frames: Frame[],
     summary?: string | null | (() => string | null),
@@ -688,16 +718,20 @@ export function App() {
     he = false,
     // потоковый прогон: кадры доезжают во время игры (frames растёт in place),
     // план штурмана и сводка прогона приходят позже начала — берём лениво
-    live?: { done: () => boolean; shtrum: () => ShtrumPlan | null },
+    live?: { done: () => boolean; shtrum: () => ShtrumPlan | null; wendy: () => WendyPlan | null },
     // вердикт «взяла/промах» берём из метрик (m.hit), а не из начала сводки:
     // в дуэли сводка начинается с «Ракета взяла» и текстовый тест давал промах при взятии
     hit?: boolean | null | (() => boolean | null),
+    // план «Кобры» — только для дуэли (её реплики рождаются из исхода боя двух мозгов)
+    wendy?: WendyPlan | null,
   ) => {
     // при включённой озвучке полёт идёт вдвое медленнее: фразы «пуск → захват → финал»
     // успевают прозвучать; без звука темп прежний
     const dt = soundOn ? 80 : 40
     let si = 0
+    let wi = 0
     let lastPlan: ShtrumPlan | null = null
+    let lastWendyPlan: WendyPlan | null = null
     for (let i = 0; ; i++) {
       if (stop.current) return
       if (i >= frames.length) {
@@ -724,6 +758,15 @@ export function App() {
         showShtrum(plan.inFlight[si], he)
         si++
       }
+      const wplan = wendy ?? live?.wendy() ?? null
+      if (wplan && wplan !== lastWendyPlan) {
+        while (wi < wplan.inFlight.length && wplan.inFlight[wi].t <= fr.t) wi++
+        lastWendyPlan = wplan
+      }
+      while (wplan && wi < wplan.inFlight.length && wplan.inFlight[wi].t <= fr.t) {
+        showWendy(wplan.inFlight[wi])
+        wi++
+      }
       await new Promise((r) => setTimeout(r, dt)) // замедленное проигрывание: полёт читается глазами
     }
     const sum = typeof summary === 'function' ? summary() : summary
@@ -734,6 +777,8 @@ export function App() {
     }
     const finalPlan = shtrum ?? live?.shtrum() ?? null
     if (finalPlan?.final) showShtrum(finalPlan.final, he)
+    const finalWendy = wendy ?? live?.wendy() ?? null
+    if (finalWendy?.final) showWendy(finalWendy.final)
   }
 
   /** Метрики прогона в историю лаборатории: серверные поля если есть, иначе считаем по кадрам. */
@@ -842,6 +887,7 @@ export function App() {
     let finished = false // сервер досчитал (done/error) или коннект умер
     let summary: string | null = null
     let plan: ShtrumPlan | null = null
+    let wendyPlan: WendyPlan | null = null
     let hitFinal: boolean | null = null
     const finalize = () => {
       if (!answer) return
@@ -858,6 +904,9 @@ export function App() {
       setDuelVerdict(duelInfo)
       summary = summaryOf(m, duelInfo)
       if (humorOn) plan = planShtrum(frames, m, flown, he)
+      // «Кобра» выходит на связь только в дуэли: она — пилот самолёта-цели,
+      // а в обычном прогоне цель — безмозглый маневр, говорить некому
+      if (humorOn && duelInfo) wendyPlan = planWendy(frames, m, flown, duelInfo)
     }
     const opened = await new Promise<boolean>((resolve) => {
       let settled = false
@@ -909,6 +958,7 @@ export function App() {
     await playFrames(frames, () => summary, undefined, null, he, {
       done: () => finished,
       shtrum: () => plan,
+      wendy: () => wendyPlan,
     }, () => hitFinal)
     try {
       ws.close()
@@ -933,8 +983,13 @@ export function App() {
     setPlayback(null)
     setSceneBadge(null)
     setSwarmCurve(null)
+    setSwarmValid([])
     if (shtrumHideRef.current) window.clearTimeout(shtrumHideRef.current)
     setShtrumCaption(null)
+    if (wendyHideRef.current) window.clearTimeout(wendyHideRef.current)
+    setWendyCaption(null)
+    if (royHideRef.current) window.clearTimeout(royHideRef.current)
+    setRoyCaption(null)
     setLog((rows) => [`Пуск: ${ASPECT_LABEL[s.aspect]}, ${MODE_LABEL[s.mode]}`, ...rows].slice(0, 14))
     say('launch')
     // пол напарника — противоположный текущему голосу; фиксируется на старте
@@ -997,7 +1052,16 @@ export function App() {
           ? { result: data.duel_result ?? null, tSurvived: data.t_survived ?? null, fuse: Boolean(data.fuse_expired) }
           : null
         setDuelVerdict(duelInfo)
-        await playFrames(frames, summaryOf(m, duelInfo), undefined, humorOn ? planShtrum(frames, m, s, he) : null, he, undefined, m.hit)
+        await playFrames(
+          frames,
+          summaryOf(m, duelInfo),
+          undefined,
+          humorOn ? planShtrum(frames, m, s, he) : null,
+          he,
+          undefined,
+          m.hit,
+          humorOn && duelInfo ? planWendy(frames, m, s, duelInfo) : null,
+        )
         saveLab()
         labTick()
         return
@@ -1032,10 +1096,16 @@ export function App() {
     setDone(null)
     if (!populationRef.current || populationRef.current.length !== swarmCfg.size) {
       populationRef.current = initPopulation(swarmCfg.size, 7)
-      setLog((rows) => [`Рой выпущен: ${swarmCfg.size} мух (мозг + МПС)`, ...rows].slice(0, 14))
+      setLog((rows) => [`Рой выпущен: ${swarmCfg.size} мух (мозг + ПН)`, ...rows].slice(0, 14))
     }
     let seed = 7
     let gen = 0
+    if (humorOn) showRoy(royLine('launch', 0))
+    // память поколений для командира: прогресс, перехваты, разнообразие, чемпион
+    let prevBest: number | null = null
+    let prevHit = 0
+    let prevDiv = -1
+    let prevChamp: number | undefined
     try {
       while (!swarmStop.current) {
         gen += 1
@@ -1063,7 +1133,7 @@ export function App() {
         setPlayback({ results: res.results, bestIdx: res.stats.best_idx, startedAt: performance.now(), durationMs })
         const best = res.results[res.stats.best_idx]
         const bio = res.results.filter((r) => r.fly.kind === 'bio').length
-        setSceneBadge(`рой · поколение ${gen}${validate ? ' · валидация' : ''} · лучший промах ${fmt(best.miss_m, 0)} м`)
+        setSceneBadge(`рой · поколение ${gen}${validate ? ' · валидация' : ''} · наименьшее сближение ${fmt(best.miss_m, 0)} м`)
         setSwarmInfo({
           gen,
           bestMiss: best.miss_m,
@@ -1074,9 +1144,30 @@ export function App() {
           geo: scenarioLabel(genSc),
           champion: res.stats.canon_best,
         })
+        // командир роя: не больше одной реплики за поколение — по самому
+        // значимому событию; кулдауны и очередь шины добьются тишины в эфире
+        if (humorOn) {
+          const champ = res.stats.canon_best
+          const hitR = res.stats.hit_rate ?? 0
+          const div = res.stats.diversity ?? 0
+          let rkey: RoyKey | null = null
+          if (validate && champ !== undefined && prevChamp !== undefined && champ < prevChamp - 1e-9) rkey = 'champion'
+          else if (validate) rkey = 'validate'
+          else if (mFactor > 1) rkey = 'stagnation'
+          else if (mFactor < 1) rkey = 'calm'
+          else if (hitR > prevHit + 1e-9) rkey = 'hits'
+          else if (prevDiv >= 0 && div < 0.9 * prevDiv) rkey = 'tight'
+          else if (prevBest !== null && best.miss_m < prevBest - 1) rkey = 'lead'
+          else if (gen % 3 === 2) rkey = 'new_geo'
+          if (rkey) showRoy(royLine(rkey, gen))
+          if (champ !== undefined) prevChamp = champ
+          prevBest = best.miss_m
+          prevHit = hitR
+          prevDiv = div
+        }
         setLog((rows) =>
           [
-            `Поколение ${gen}${validate ? ' (валидация)' : ''} · ${scenarioLabel(genSc)} · лучший промах ${fmt(best.miss_m, 0)} м${res.local ? ' · в окне' : ''}`,
+            `Поколение ${gen}${validate ? ' (валидация)' : ''} · ${scenarioLabel(genSc)} · наименьшее сближение ${fmt(best.miss_m, 0)} м${res.local ? ' · в окне' : ''}`,
             ...rows,
           ].slice(0, 14),
         )
@@ -1091,6 +1182,7 @@ export function App() {
           local: Boolean(res.local),
         })
         setSwarmCurve(labRef.current.gen.map((p) => p.best))
+        setSwarmValid(labRef.current.gen.flatMap((p, i) => (p.champ !== undefined ? [i] : [])))
         saveLab()
         labTick()
         // сцена живёт по телеметрии лидера, пока летит поколение
@@ -1111,6 +1203,7 @@ export function App() {
 
   const stopSwarm = () => {
     swarmStop.current = true
+    if (humorOn) showRoy(royLine('stop', 99))
     setLog((rows) => ['Рой остановлен.', ...rows].slice(0, 14))
   }
 
@@ -1119,6 +1212,7 @@ export function App() {
     setFrame(null)
     setPlayback(null)
     setSwarmCurve(null)
+    setSwarmValid([])
     const rookie: FlyGenome = { kind: 'bio', w: Array(16).fill(0), gain: 1, pn_n: 4 }
     // ветеран — элита последнего поколения роя; без роя — врождённый рефлекс
     const veteran = sanitizeFly(populationRef.current?.[0] ?? { kind: 'bio' })
@@ -1152,11 +1246,12 @@ export function App() {
     window.setTimeout(() => clearInterval(iv), durationMs + 150)
   }
 
-  /** Демо «муха против МПС»: обученный мозг против эталонного МПС на одной цели. */
+  /** Демо «муха против ПН»: обученный мозг против эталонного ПН на одной цели. */
   const flyVsPN = async () => {
     setFrame(null)
     setPlayback(null)
     setSwarmCurve(null)
+    setSwarmValid([])
     setBusy(true)
     try {
       const runOne = async (over: Partial<Scenario>) => {
@@ -1182,7 +1277,7 @@ export function App() {
       const durationMs = Math.max(6000, Math.min(16000, maxPts * 40)) // демо беззвучно — темп обычный
       setPlayback({
         results: [
-          { ...pn, label: `МПС (эталон) · ${fmt(pn.miss_m, 0)} м` },
+          { ...pn, label: `ПН (эталон) · ${fmt(pn.miss_m, 0)} м` },
           { ...fly, label: `муха · ${fmt(fly.miss_m, 0)} м` },
         ],
         bestIdx: fly.miss_m <= pn.miss_m ? 1 : 0,
@@ -1190,10 +1285,10 @@ export function App() {
         durationMs,
         race: true,
       })
-      const winner = fly.miss_m <= pn.miss_m ? 'муха точнее' : 'МПС точнее'
-      setSceneBadge(`муха против МПС · МПС ${fmt(pn.miss_m, 0)} м · муха ${fmt(fly.miss_m, 0)} м · ${winner}`)
+      const winner = fly.miss_m <= pn.miss_m ? 'муха точнее' : 'ПН точнее'
+      setSceneBadge(`муха против ПН · ПН ${fmt(pn.miss_m, 0)} м · муха ${fmt(fly.miss_m, 0)} м · ${winner}`)
       setLog((rows) => [
-        `Гонка «муха против МПС»: эталон ${fmt(pn.miss_m, 0)} м, обученная муха ${fmt(fly.miss_m, 0)} м — ${winner}.`,
+        `Гонка «муха против ПН»: эталон ${fmt(pn.miss_m, 0)} м, обученная муха ${fmt(fly.miss_m, 0)} м — ${winner}.`,
         ...rows,
       ].slice(0, 14))
     } finally {
@@ -1396,7 +1491,7 @@ export function App() {
         [`Сравнение: ${data.results.map((r) => `${r.label} ${fmt(r.miss_m, 0)} м`).join(' · ')}`, ...rows].slice(0, 14),
       )
     } catch {
-      // без сервера честно сравним в окне: эталонный МПС, текущий закон и локальная схема
+      // без сервера честно сравним в окне: эталонный ПН, текущий закон и локальная схема
       try {
         const rows: CmpRow[] = []
         const runLocal = (kind: string, label: string, over: Partial<Scenario>) => {
@@ -1414,7 +1509,7 @@ export function App() {
             ref_dev_m: m.refDev,
           })
         }
-        runLocal('pn', 'МПС (эталон, окно)', { mode: 'pn', law: 'pn' })
+        runLocal('pn', 'ПН (эталон, окно)', { mode: 'pn', law: 'pn' })
         if (sc.law !== 'pn') runLocal(sc.law, `закон: ${LAW_RU[sc.law] ?? sc.law} (окно)`, { mode: 'pn', law: sc.law })
         runLocal('stub', 'схема (окно)', { mode: 'bio', brain: 'stub' })
         setCmp({ loading: false, rows })
@@ -1490,7 +1585,7 @@ export function App() {
     )
   }
 
-  /** Исследовательский экспорт: траектории ракеты, цели и эталона МПС + команды, события,
+  /** Исследовательский экспорт: траектории ракеты, цели и эталона ПН + команды, события,
    *  захват, фаза сближения (theta/rho) и диагностика N_экв (CSV). */
   const exportTrajectories = () => {
     const frames = lastFramesRef.current
@@ -1503,7 +1598,7 @@ export function App() {
       '# model_version=' + MODEL_VERSION +
       ' metrics_version=4 feature_schema_version=' + FEATURE_SCHEMA_VERSION +
       ' (истинная геометрия в n_eff/tgo — постфактум-диагностика, не для управления)\n' +
-      '# столбцы: range_m=дальность R, м; v_c=скорость сближения Vc, м/с; tgo_s=радиальная оценка времени R/Vc, с;' +
+      '# столбцы: range_m=дальность R, м; v_c=скорость сближения V_сбл, м/с; tgo_s=радиальная оценка времени R/V_сбл, с;' +
       ' theta_rad=угол ЛВ φ, рад; theta_dot=ω_ЛВ, рад/с; tau_contact_s=оптическая оценка времени до контакта τ, с;' +
       ' az/el=азимут/угол места цели, рад; n_eff=эквивалентный навигационный коэффициент N_экв, безразм.;' +
       ' n_req_g=заданная нормальная перегрузка, g; saturation=ограничение команды; hit=перехват (пересечение сферы срабатывания);' +
@@ -1559,7 +1654,7 @@ export function App() {
     ].slice(0, 14))
   }
 
-  /** Серия прогонов с нарастающим шумом: робастность мозгов. */
+  /** Серия прогонов с нарастающим шумом: устойчивость мозгов. */
   const runRobustness = async () => {
     setRobBusy(true)
     try {
@@ -1571,9 +1666,9 @@ export function App() {
       if (!r.ok) throw new Error()
       const d = (await r.json()) as { levels: number[]; series: { kind: string; label: string; miss: number[]; nrms: (number | null)[] }[] }
       setRobData(d)
-      setLog((rows) => [`Робастность: уровни шума ${d.levels.join(' → ')}°, серии по ${d.series.length} мозгам.`, ...rows].slice(0, 14))
+      setLog((rows) => [`Устойчивость к возмущениям: уровни шума ${d.levels.join(' → ')}°, серии по ${d.series.length} мозгам.`, ...rows].slice(0, 14))
     } catch {
-      setLog((rows) => ['Робастность считается только на работающем стенде.', ...rows].slice(0, 14))
+      setLog((rows) => ['Устойчивость к возмущениям считается только на работающем стенде.', ...rows].slice(0, 14))
     } finally {
       setRobBusy(false)
     }
@@ -1686,6 +1781,7 @@ export function App() {
         champ: p.champ === undefined ? undefined : Number(p.champ),
       }))
       setSwarmCurve(labRef.current.gen.length >= 2 ? labRef.current.gen.map((p) => p.best) : null)
+      setSwarmValid(labRef.current.gen.flatMap((p, i) => (p.champ !== undefined ? [i] : [])))
       if (d.cfg) setSwarmCfg((c) => ({ ...c, ...d.cfg }))
       saveLab()
       labTick()
@@ -1893,7 +1989,7 @@ export function App() {
       )
       setLog((rows) =>
         [
-          `Обучение готово: промах ${fmt(s0.metrics_before?.miss ?? s0.miss_before, 0)} → ${fmt(fd.miss_after, 0)} м, отклонение от МПС ${fmt(
+          `Обучение готово: промах ${fmt(s0.metrics_before?.miss ?? s0.miss_before, 0)} → ${fmt(fd.miss_after, 0)} м, отклонение от ПН ${fmt(
             s0.metrics_before?.ref_dev,
             0,
           )} → ${fmt(fd.ref_dev_after, 0)} м.`,
@@ -2001,9 +2097,11 @@ export function App() {
           onToggleGeometry={() => setGeometryOn((g) => !g)}
           sceneBadge={sceneBadge}
           swarmCurve={swarmCurve}
+          swarmValid={swarmValid}
           egg={egg}
           cofly={humorOn ? (voiceKind === 'female' ? 'm' : 'f') : null}
           shtrumCaption={shtrumCaption}
+          wendyCaption={wendyCaption}
           silent={swarmRunning || playback?.race === true}
           sceneIdle={training}
           busy={busy}
@@ -2052,7 +2150,9 @@ export function App() {
           onToggleGeometry={() => setGeometryOn((g) => !g)}
           sceneBadge={sceneBadge}
           swarmCurve={swarmCurve}
+          swarmValid={swarmValid}
           egg={egg}
+          royCaption={royCaption}
           silent={swarmRunning || playback?.race === true}
           busy={busy}
           swarmRunning={swarmRunning}
@@ -2089,6 +2189,8 @@ export function App() {
           busy={busy}
           done={done}
           duelVerdict={duelVerdict}
+          shtrumCaption={shtrumCaption}
+          wendyCaption={wendyCaption}
           duelMatrix={duelMatrix}
           duelBusy={duelBusy}
           duelRepeats={duelRepeats}

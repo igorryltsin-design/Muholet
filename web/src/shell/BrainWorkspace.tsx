@@ -85,7 +85,7 @@ export function BrainWorkspace({
 
         <section className="ws-card">
           <h3>Обучение</h3>
-          <p className="lab-hint" style={{ margin: 0 }} data-tip="Учим выход DN подражать эталону МПС на случайных пусках.">
+          <p className="lab-hint" style={{ margin: 0 }} data-tip="Учим выход DN подражать эталону ПН на случайных пусках.">
             {trainNote}
           </p>
           {trainProgress && (

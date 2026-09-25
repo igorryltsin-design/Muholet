@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 
 from navedenie.circuit import FEAT_DIM, FlyCircuit, migrate_feature_columns
+from navedenie.parallel import parallel_map
 from navedenie.pn import ppn_accel
 from navedenie.seeker import body_axes, observe
 from navedenie.sim import G, Scenario, clip_accel, closing_speed, integrate, integrate_target, spawn, target_accel
@@ -288,7 +289,9 @@ def rollout(sc: Scenario, fly: FlyGenome, *, dt: float = 0.02, sample_dt: float 
 
 
 def evaluate_population(sc: Scenario, flies: list[FlyGenome]) -> list[dict]:
-    return [rollout(sc, fly) for fly in flies]
+    # бои независимы — на всех ядрах поколение роя считается в разы быстрее,
+    # а процесс стенда не зажимает интерактивные запуски (см. parallel.py)
+    return parallel_map(rollout, [(sc, fly) for fly in flies])
 
 
 def _mutate(fly: FlyGenome, sigma: float, rng: np.random.Generator) -> FlyGenome:

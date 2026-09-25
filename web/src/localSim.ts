@@ -370,7 +370,7 @@ export function integrateTarget(b: Body, sc: Scenario, t: number, dt: number) {
   ]
 }
 
-/** Диагностика N_экв: какому коэффициенту МПС эквивалентна проекция команды.
+/** Диагностика N_экв: какому коэффициенту ПН эквивалентна проекция команды.
  *  Зеркало pn.n_eff_from: q = perp(ω×V, V); N_экв = <a,q>/<q,q>. */
 export function neffFrom(
   aCmd: number[],
@@ -393,7 +393,7 @@ export function neffFrom(
   return { nEff: dot(aCmd, q) / dot(q, q), reason: null }
 }
 
-/** «МПС через ГСН»: команда только из измеренных угловых скоростей.
+/** «ПН через ГСН»: команда только из измеренных угловых скоростей.
  *  Зеркало navedenie/pn.py::pn_seeker_accel. Оси: x по скорости, y вправо, z вверх
  *  (скоростная система). a = |v|·N·(ω_az·ŷ + ω_el·ẑ) — знак по месту ПОЛОЖИТЕЛЬНЫЙ
  *  (цель уходит вверх → команда вверх), как в Python. */
@@ -423,7 +423,7 @@ export function* localRun(sc: Scenario, opts?: { learn?: boolean; lr?: number })
   let { pM, vM, pT, vT } = spawn(sc)
   const mB: Body = { p: pM, v: vM }
   const tB: Body = { p: pT, v: vT }
-  // призрак: эталонный МПС летит ту же цель — метрика «похожести»
+  // призрак: эталонный ПН летит ту же цель — метрика «похожести»
   const gB: Body = { p: [...pM], v: [...vM] }
   let t = 0
   let cpa = 1e9
@@ -443,7 +443,7 @@ export function* localRun(sc: Scenario, opts?: { learn?: boolean; lr?: number })
     const u = Math.max(Math.random(), 1e-9)
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random())
   }
-  // эталонный МПС смотрит в узкий прибор; БИО — фовеальная полусфера
+  // эталонный ПН смотрит в узкий прибор; БИО — фовеальная полусфера
   const halfFovBio = ((Math.max(sc.bio_fov_deg, 2) * Math.PI) / 180) / 2
   const halfFovPn = ((sc.fov_deg * Math.PI) / 180) / 2
   const halfFov = sc.mode === 'pn' ? halfFovPn : halfFovBio
@@ -537,7 +537,7 @@ export function* localRun(sc: Scenario, opts?: { learn?: boolean; lr?: number })
     let aCmd: number[]
     if (sc.mode === 'pn') {
       if (sc.law === 'tpn') {
-        // истинный МПС: a = N·V_c·(ω×r̂) по нормали к ЛВ — зеркало navedenie/pn.py
+        // истинная ПН: a = N·V_c·(ω×r̂) по нормали к ЛВ — зеркало navedenie/pn.py
         const rHat = unit(r)
         const vcPos = Math.max(0, vc)
         const tpnVec = cross(omega, rHat).map((x) => x * sc.pn_n * vcPos)
@@ -549,15 +549,15 @@ export function* localRun(sc: Scenario, opts?: { learn?: boolean; lr?: number })
         const comp = perp(targetLift, vM).map((x) => (x * sc.pn_n) / 2)
         aCmd = clip(perp(add(pnVec, comp), vM), sc.n_max)
       } else if (sc.law === 'pn_gsn') {
-        // сенсорная МПС: декодированные угловые скорости, сглаженные фильтром ГСН
+        // сенсорная ПН: декодированные угловые скорости, сглаженные фильтром ГСН
         aCmd = lock ? sensorPnAccel(azDotS, elDotS, vM, sc.pn_n, sc.n_max) : [0, 0, 0]
       } else if (sc.law === 'pn_sched_oracle') {
-        // МПС с переменным N (эталон): истинное Vc/R — подсказка геометрией
+        // ПН с переменным N (эталон): истинное Vc/R — подсказка геометрией
         const rhoTrue = vc / Math.max(rng, 1)
         const nSched = Math.max(sc.pn_sched_n_min, Math.min(sc.pn_sched_n_max, sc.pn_sched_n0 + sc.pn_sched_k_rho * rhoTrue))
         aCmd = clip(perp(cross(omega, vM).map((x) => x * nSched) as number[], vM), sc.n_max)
       } else if (sc.law === 'pn_sched_sensor') {
-        // МПС с переменным N (сенсорная): N из ИЗМЕРЕННОГО ρ, команда из сглаженных ω
+        // ПН с переменным N (сенсорная): N из ИЗМЕРЕННОГО ρ, команда из сглаженных ω
         const nSched = Math.max(sc.pn_sched_n_min, Math.min(sc.pn_sched_n_max, sc.pn_sched_n0 + sc.pn_sched_k_rho * rho))
         aCmd = lock ? sensorPnAccel(azDotS, elDotS, vM, nSched, sc.n_max) : [0, 0, 0]
       } else if (sc.law === 'pure') {

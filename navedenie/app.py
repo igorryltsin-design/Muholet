@@ -403,7 +403,7 @@ def brain_compare(body: BrainCompareIn) -> dict[str, Any]:
     информационному бюджету (поле `info_group`):
     - «oracle» — законы с точной геометрией (эталоны с подсказкой, НЕ равноправные
       сенсорным участникам);
-    - «sensor» — МПС по измерениям ГСН, экспериментальное МПС с переменным
+    - «sensor» — ПН по измерениям ГСН, экспериментальное ПН с переменным
       коэффициентом (сенсорная) и био-мозга (только измерения после поля зрения,
       шумов, отказов и задержки). Профиль сенсора (поле зрения) — в `sensor_fov_deg`.
     Единый рейтинг oracle и сенсорных законов не строится (см. docs/model_assumptions.md)."""
@@ -434,7 +434,7 @@ def brain_compare(body: BrainCompareIn) -> dict[str, Any]:
         res = collect(sc_l, stride=stride)
         is_sensor = law in ("pn_gsn", "pn_sched_sensor")
         out.append(_finalize({"kind": law, "label": law_label.get(law, law), "n_cells": 0, "trained": None, **_metrics(res, sc_l)}, res, body.with_traj, sensory=is_sensor, sensor_fov_deg=sc_l.fov_deg if is_sensor else None))
-    # эталонный МПС (oracle)
+    # эталонный ПН (oracle)
     ref_res = collect(replace(base, mode="pn", law="pn"), stride=stride)
     out.append(_finalize({"kind": "pn", "label": law_label["pn"], "n_cells": 0, "trained": None, **_metrics(ref_res, base)}, res=ref_res, with_traj=body.with_traj))
     for kind in body.kinds:
@@ -567,7 +567,7 @@ class ScalingIn(BaseModel):
 
 @app.post("/api/scaling")
 def scaling_endpoint(body: ScalingIn) -> dict[str, Any]:
-    """Scaling-кривая: мозги разного размера (каналы коннектома / пул полного)
+    """Кривая масштабируемости: мозги разного размера (каналы коннектома / пул полного)
     обучаются ОДИНАКОВО и сравниваются по каноническому трио. График
     «число обучаемых параметров ↔ промах»: сколько мозга окупается."""
     from navedenie.science import scaling_curve
@@ -866,7 +866,7 @@ def report_night(body: NightReportIn) -> dict[str, Any]:
         s = body.scaling
         _png("scaling.png")
         png.lines_png(folder / "scaling.png", [{"values": [float(r["miss_after"]) for r in s["rows"]], "color": png.PHOS}])
-        lines += ["## Scaling-кривая: параметры ↔ промах", "",
+        lines += ["## Кривая масштабируемости: параметры ↔ промах", "",
                   f"Мозг «{s.get('kind')}», {s.get('episodes')} одинаковых эпизодов на каждый размер, {s.get('seconds')} с.", "",
                   "![scaling](scaling.png)", "",
                   "| Размер | Обучаемых параметров | Промах до, м | Промах после, м | Перехваты | Откл. от ПН, м |",
@@ -1188,7 +1188,7 @@ def coevolve_train_fly(body: dict[str, Any] | None = None) -> dict[str, Any]:
 
 @app.post("/api/map")
 def map_advantage(body: MapIn) -> dict[str, Any]:
-    """Карта преимуществ: сетка «манёвр × закон наведения» — промах эталонного МПС
+    """Карта преимуществ: сетка «манёвр × закон наведения» — промах эталонного ПН
     (mode=pn, заданный закон) против промаха био-мозга (mode=bio, текущий сохранённый)."""
     from dataclasses import replace
 
@@ -1199,7 +1199,7 @@ def map_advantage(body: MapIn) -> dict[str, Any]:
         ("ножницы", "scissors", 3),
         ("горка/пике", "dive", 3),
     ]
-    laws = [("pn", "МПС"), ("tpn", "истинный МПС"), ("apn", "МПС+компенсация"), ("pure", "погоня"), ("clos", "три точки")]
+    laws = [("pn", "ПН"), ("tpn", "истинная ПН"), ("apn", "ПН+компенсация"), ("pure", "погоня"), ("clos", "три точки")]
     rows: list[dict[str, Any]] = []
     for label_m, maneuver, n_target in maneuvers:
         for law_id, label_l in laws:

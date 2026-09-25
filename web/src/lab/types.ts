@@ -94,7 +94,7 @@ export type MonteCarloData = {
 export const LAB_GROUPS: { title: string; items: [LabTab, string][] }[] = [
   { title: 'Обзор', items: [['run', 'Прогон'], ['summary', 'Сводка']] },
   { title: 'Обучение', items: [['train', 'Обучение'], ['swarm', 'Рой']] },
-  { title: 'Анализ', items: [['compare', 'Сравнение'], ['neff', 'N_экв'], ['rob', 'Робастность'], ['mc', 'Разброс'], ['cz', 'Зона перехвата'], ['law', 'Закон']] },
+  { title: 'Анализ', items: [['compare', 'Сравнение'], ['neff', 'N_экв'], ['rob', 'Устойчивость к возмущениям'], ['mc', 'Разброс'], ['cz', 'Зона перехвата'], ['law', 'Закон']] },
   { title: 'Исследования', items: [['map', 'Карта'], ['transfer', 'Переносимость'], ['scaling', 'Масштаб мозга']] },
   { title: 'Модель', items: [['formula', 'Формула'], ['params', 'Параметры']] },
 ]

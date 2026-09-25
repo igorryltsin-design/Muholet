@@ -41,7 +41,7 @@ export function TrainScreen({
       { data: movingAvg(raw(pick), smooth).map((v) => (v === null ? NaN : v)).filter((v) => Number.isFinite(v)) as number[], color, width: 2.4, label: `среднее ${smooth}` },
     ]
     if (c1.current) drawChart(c1.current, trend((p) => p.miss, CHART.accent()), 'Промах по эпизодам, м — тонкая линия факт, яркая — среднее за окно', borders)
-    if (c2.current) drawChart(c2.current, trend((p) => (p.refDev > 0 ? p.refDev : null), CHART.amber()), 'Отклонение от траектории эталонного МПС, м — мера похожести, МПС не «оптимален» в общем случае', borders)
+    if (c2.current) drawChart(c2.current, trend((p) => (p.refDev > 0 ? p.refDev : null), CHART.amber()), 'Отклонение от траектории эталонного ПН, м — мера похожести, ПН не «оптимален» в общем случае', borders)
     if (c3.current) {
       const tg = data.train.map((p) => p.tGuide)
       const maxT = Math.max(...tg.filter((v): v is number => v !== null), 0)
@@ -111,7 +111,7 @@ export function TrainScreen({
   return (
     <LabScreen
       title="Обучение"
-      about="Муха учится подражать учителю-МПС, летя сама — со своими шумами и срывами захвата. Каждая сессия отделена пунктиром; тонкая линия — факт, яркая — скользящее среднее."
+      about="Муха учится подражать учителю-ПН, летя сама — со своими шумами и срывами захвата. Каждая сессия отделена пунктиром; тонкая линия — факт, яркая — скользящее среднее."
       primary={
         training ? (
           <button type="button" className="primary" onClick={onTrainStop}>
@@ -169,7 +169,7 @@ export function TrainScreen({
       }
       note={
         data.summary
-          ? `Сводка канонического трио: промах ${fmt(data.summary.missBefore, 0)} → ${fmt(data.summary.missAfter, 0)} м · отклонение от МПС ${fmt(data.summary.refDevBefore, 0)} → ${fmt(data.summary.refDevAfter, 0)} м · время наведения ${fmt(data.summary.tGuideAfter, 2)} с · перехваты ${Math.round((data.summary.hitRateAfter ?? 0) * 100)}%.`
+          ? `Сводка канонического трио: промах ${fmt(data.summary.missBefore, 0)} → ${fmt(data.summary.missAfter, 0)} м · отклонение от ПН ${fmt(data.summary.refDevBefore, 0)} → ${fmt(data.summary.refDevAfter, 0)} м · время наведения ${fmt(data.summary.tGuideAfter, 2)} с · перехваты ${Math.round((data.summary.hitRateAfter ?? 0) * 100)}%.`
           : 'Настройки обучения (режим, шаг, число эпизодов) — в пространстве «Мозг», кнопка «Параметры обучения».'
       }
     >

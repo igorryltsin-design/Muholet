@@ -377,6 +377,10 @@ body.theme-day .view-hint { color: var(--text-muted); }
   font-weight: 600;
   margin-right: 4px;
 }
+/* «Кобра» — вторая напарница: встаёт над строкой штурмана, когда говорят обе */
+.shtrum-caption--wendy {
+  bottom: 52px;
+}
 .swarm-curve {
   position: absolute;
   right: 12px;

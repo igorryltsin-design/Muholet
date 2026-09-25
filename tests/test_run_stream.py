@@ -90,7 +90,10 @@ def test_final_voice_follows_metrics_not_summary_prefix() -> None:
     assert "hit?: boolean | null | (() => boolean | null)" in app  # параметр playFrames
     assert "got ?? sum.startsWith('Перехват')" in app  # голос: метрика, текст — лишь фолбэк
     assert "hitFinal = m.hit" in app  # стрим-путь: честный hit из 'done'
-    assert app.count("undefined, m.hit)") == 2  # POST и офлайн-фолбэк несут m.hit
+    # POST и офлайн-фолбэк несут m.hit (виток 16: после hit добавился wendy-план,
+    # поэтому POST-вызов разбит построчно и «undefined, m.hit)» в нём не встречается)
+    assert "undefined, m.hit)" in app  # офлайн-фолбэк: одной строкой
+    assert "undefined,\n          m.hit," in app  # POST: та же пара аргументов
     for f in ("web/src/App.tsx", "web/src/shell/FlightWorkspace.tsx"):
         src = (REPO / f).read_text(encoding="utf-8")
         assert "startsWith('Ракета')" in src, f  # статус-окраска вердикта дуэли

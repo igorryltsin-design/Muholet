@@ -75,7 +75,7 @@ def test_shtrum_keys_match_across_sources() -> None:
     )
     for key, pair in p.items():
         assert set(pair) == {"m", "f"}, key
-        assert len(pair["m"]) == len(pair["f"]) == 3, key
+        assert len(pair["m"]) == len(pair["f"]) == 4, key
 
 
 def test_phrases_mirror_make_voice() -> None:
@@ -141,8 +141,8 @@ def test_partner_voice_waits_for_pilot_to_finish() -> None:
     договаривает, встаёт в очередь (с TTL), а не накладывается на её фразу;
     субтитр при этом показывается сразу — очередь касается только звука."""
     v = VOICE_TS.read_text(encoding="utf-8")
-    # один канал занят говорющим: есть владелец (main/shtrum) и очередь штурмана
-    assert "type SpeakerOwner = 'main' | 'shtrum'" in v
+    # один канал занят говорющим: есть владелец (main/shtrum/wendy) и очередь штурмана
+    assert "type SpeakerOwner = 'main' | 'roy' | 'shtrum' | 'wendy'" in v
     assert "shtrumTurn" in v
     # очередь сгорает по TTL (устаревшая реплика не ожилает через пол-прогона)
     assert "TURN_TTL" in v and "Date.now() - t.since <= TURN_TTL" in v

@@ -80,7 +80,7 @@ export function ScenarioInspector({
             />
           </label>
           <label data-tip="Подлёт ближе этого расстояния — срабатывание боевой части и «перехват».">
-            Радиус БЧ, м
+            Радиус срабатывания БЧ, м
             <input type="number" value={sc.kill_radius_m} onChange={(e) => set('kill_radius_m', Number(e.target.value))} />
           </label>
         </div>
@@ -88,7 +88,7 @@ export function ScenarioInspector({
 
       <Accordion id="guidance" title="Наведение" hint="Кто ведёт ракету и по какому закону." extra={MODE_SHORT[sc.mode]}>
         <div className="fields">
-          <label data-tip="МПС — классика (гасим вращение линии визирования). Био — контур дрозофилы, видит только кадр 16×16. Смешанный — био, при потере захвата включает МПС.">
+          <label data-tip="ПН — классика (гасим вращение линии визирования). Био — контур дрозофилы, видит только кадр 16×16. Смешанный — био, при потере захвата включает ПН.">
             Способ наведения
             <select value={sc.mode} onChange={(e) => set('mode', e.target.value as Scenario['mode'])}>
               <option value="pn">пропорциональное</option>
@@ -104,17 +104,17 @@ export function ScenarioInspector({
               <option value="connectome">коннектом-модель (~109 тыс)</option>
             </select>
           </label>
-          <label data-tip="Эталонные законы (МПС, МПС с компенсацией ускорения цели, метод погони, метод трёх точек) видят точную геометрию — это сравнение «с подсказкой». «МПС по измерениям ГСН» — сенсорная: команда только из декодированных углов кадра.">
+          <label data-tip="Эталонные законы (ПН, ПН с компенсацией ускорения цели, метод погони, метод трёх точек) видят точную геометрию — это сравнение «с подсказкой». «ПН по измерениям ГСН» — сенсорная: команда только из декодированных углов кадра.">
             Закон наведения
             <select value={sc.law} onChange={(e) => set('law', e.target.value as Scenario['law'])} disabled={sc.mode !== 'pn'}>
-              <option value="pn">Метод пропорционального сближения (МПС) — базовый</option>
-              <option value="tpn">Истинный МПС — команда по нормали к линии визирования (эталон)</option>
-              <option value="apn">МПС с компенсацией нормального ускорения цели (эталон)</option>
+              <option value="pn">Метод пропорциональной навигации (ПН) — базовый</option>
+              <option value="tpn">Истинная ПН — команда по нормали к линии визирования (эталон)</option>
+              <option value="apn">ПН с компенсацией нормального ускорения цели (эталон)</option>
               <option value="pure">Метод погони (эталон)</option>
               <option value="clos">Метод трёх точек (эталон)</option>
-              <option value="pn_gsn">МПС по измерениям сенсорного канала ГСН (сенсорная)</option>
-              <option value="pn_sched_oracle">МПС с переменным навигационным коэффициентом N (эталон, по истинному t_cpa)</option>
-              <option value="pn_sched_sensor">МПС с переменным навигационным коэффициентом N (сенсорная, по ρ)</option>
+              <option value="pn_gsn">ПН по измерениям сенсорного канала ГСН (сенсорная)</option>
+              <option value="pn_sched_oracle">ПН с переменным навигационным коэффициентом N (эталон, по истинному t_cpa)</option>
+              <option value="pn_sched_sensor">ПН с переменным навигационным коэффициентом N (сенсорная, по ρ)</option>
             </select>
           </label>
           <label data-tip="Кинематическая модель — постоянный модуль скорости (обратная совместимость, работает и в локальном окне). Трёхстепенная модель движения центра масс добавляет тягу, сопротивление, тяжесть и инерцию исполнительного контура; считается только на сервере (Python — авторитет).">
@@ -140,7 +140,7 @@ export function ScenarioInspector({
             </label>
           ) : null}
           <label data-tip="Общее усиление биоконтура: насколько сильно выход отклоняет рули.">
-            Усиление команды
+            Коэффициент усиления контура
             <input type="number" step={0.05} value={sc.circuit_gain} onChange={(e) => set('circuit_gain', Number(e.target.value))} />
           </label>
           <label data-tip="τ нейронов: меньше — реакция резче, больше — контур инертнее.">
@@ -241,4 +241,4 @@ export function ScenarioInspector({
   )
 }
 
-const MODE_SHORT: Record<Scenario['mode'], string> = { pn: 'МПС', bio: 'био', both: 'смешанный' }
+const MODE_SHORT: Record<Scenario['mode'], string> = { pn: 'ПН', bio: 'био', both: 'смешанный' }

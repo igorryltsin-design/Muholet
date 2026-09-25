@@ -75,7 +75,7 @@ def test_night_report_with_png(tmp_path: Path, monkeypatch) -> None:
     for f in out["files"]:
         assert f"({f})" in md
     assert "## Матрица переносимости" in md and "| turn | 30 | 55 | 90 |" in md
-    assert "## Scaling-кривая" in md and "| 8 | 32784 |" in md
+    assert "## Кривая масштабируемости" in md and "| 8 | 32784 |" in md
     assert (tmp_path / "exp").exists()
 
 

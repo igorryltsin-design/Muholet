@@ -26,6 +26,7 @@ import numpy as np
 
 from navedenie.circuit import FEAT_DIM
 from navedenie.redqueen import EXAM_GEOMETRY, apply_champions, brain_battle, init_brain_population
+from navedenie.parallel import parallel_map
 from navedenie.sim import Scenario
 from navedenie.swarm import FlyGenome, _mutate, fly_from_json
 
@@ -314,40 +315,43 @@ def ring_battle(base: Scenario, duels: list[dict], *, dt: float | None = None) -
 
     per_att: dict[int, list[bool]] = {cid: [] for cid, _, _, _ in crews}
     per_def: dict[int, list[bool]] = {cid: [] for cid, _, _, _ in crews}
+    pairs = [(ai, di) for ai in range(len(crews)) for di in range(len(crews)) if ai != di]
+    flat = parallel_map(
+        brain_battle,
+        [(replace(sc_base, **g), crews[ai][2], crews[di][3]) for ai, di in pairs for g in EXAM_GEOMETRY],
+    )
     cells = []
-    for ai, (aid, _, amg, _) in enumerate(crews):
-        for di, (did, _, _, deg) in enumerate(crews):
-            if ai == di:
-                continue
-            row = {"attacker": aid, "defender": did, "battles": []}
-            for g in EXAM_GEOMETRY:
-                sc = replace(sc_base, **g)
-                b = brain_battle(sc, amg, deg)
-                row["battles"].append(
-                    {
-                        "aspect": sc.aspect,
-                        "hit": b["hit"],
-                        "t_survived": b["t_survived"],
-                        "missile_n_int": b["missile_n_int"],
-                        "cpa_m": b["cpa_m"],
-                        "missile_fitness": b["missile_fitness"],
-                        "evader_fitness": b["evader_fitness"],
-                    }
-                )
-                per_att[aid].append(b["hit"])
-                per_def[did].append(not b["hit"])
-            hits = [x["hit"] for x in row["battles"]]
-            row.update(
+    for pi, (ai, di) in enumerate(pairs):
+        aid, did = crews[ai][0], crews[di][0]
+        row = {"attacker": aid, "defender": did, "battles": []}
+        for gi in range(len(EXAM_GEOMETRY)):
+            sc = replace(sc_base, **EXAM_GEOMETRY[gi])
+            b = flat[pi * len(EXAM_GEOMETRY) + gi]
+            row["battles"].append(
                 {
-                    "p_hit": float(np.mean(hits)),
-                    "t_survived_median": _median([x["t_survived"] for x in row["battles"]]),
-                    "n_int_median": _median([x["missile_n_int"] for x in row["battles"]]),
-                    "cpa_m_median": _median([x["cpa_m"] for x in row["battles"]]),
-                    "missile_fitness_median": _median([x["missile_fitness"] for x in row["battles"]]),
-                    "evader_fitness_median": _median([x["evader_fitness"] for x in row["battles"]]),
+                    "aspect": sc.aspect,
+                    "hit": b["hit"],
+                    "t_survived": b["t_survived"],
+                    "missile_n_int": b["missile_n_int"],
+                    "cpa_m": b["cpa_m"],
+                    "missile_fitness": b["missile_fitness"],
+                    "evader_fitness": b["evader_fitness"],
                 }
             )
-            cells.append(row)
+            per_att[aid].append(b["hit"])
+            per_def[did].append(not b["hit"])
+        hits = [x["hit"] for x in row["battles"]]
+        row.update(
+            {
+                "p_hit": float(np.mean(hits)),
+                "t_survived_median": _median([x["t_survived"] for x in row["battles"]]),
+                "n_int_median": _median([x["missile_n_int"] for x in row["battles"]]),
+                "cpa_m_median": _median([x["cpa_m"] for x in row["battles"]]),
+                "missile_fitness_median": _median([x["missile_fitness"] for x in row["battles"]]),
+                "evader_fitness_median": _median([x["evader_fitness"] for x in row["battles"]]),
+            }
+        )
+        cells.append(row)
 
     standings = []
     for cid, label, _, _ in crews:

@@ -20,9 +20,11 @@ export function FlightWorkspace({
   onToggleGeometry,
   sceneBadge,
   swarmCurve,
+  swarmValid,
   egg,
   cofly,
   shtrumCaption,
+  wendyCaption,
   silent,
   sceneIdle,
   busy,
@@ -42,10 +44,13 @@ export function FlightWorkspace({
   onToggleGeometry: () => void
   sceneBadge: string | null
   swarmCurve: number[] | null
+  /** индексы валидационных поколений в кривой */
+  swarmValid: number[]
   egg: boolean
   /** юмор-режим: пол напарника ('m'/'f') или null — режим выключен */
   cofly: 'm' | 'f' | null
   shtrumCaption: { text: string; he: boolean } | null
+  wendyCaption: { text: string } | null
   silent: boolean
   sceneIdle: boolean
   busy: boolean
@@ -84,6 +89,7 @@ export function FlightWorkspace({
             sceneIdle={sceneIdle}
             sceneBadge={sceneBadge}
             swarmCurve={swarmCurve}
+            swarmValid={swarmValid}
             cockpit={egg}
             cofly={cofly}
             silent={silent}
@@ -109,13 +115,13 @@ export function FlightWorkspace({
             <span className="chip" data-tip="Как летит цель относительно ракеты: навстречу, поперёк курса или в догон.">
               {ASPECT_LABEL[sc.aspect]}
             </span>
-            <span className={`chip ${sc.mode === 'bio' ? 'is-warn' : ''}`} data-tip="Закон управления: МПС — эталонная математика, био — мозг дрозофилы, смешанный — био с резервным МПС.">
+            <span className={`chip ${sc.mode === 'bio' ? 'is-warn' : ''}`} data-tip="Закон управления: ПН — эталонная математика, био — мозг дрозофилы, смешанный — био с резервным ПН.">
               {MODE_LABEL[sc.mode]}
             </span>
-            <span className="chip" data-tip="Закон наведения режима МПС.">
+            <span className="chip" data-tip="Закон наведения режима ПН.">
               {LAW_RU[sc.law] ?? sc.law}
             </span>
-            <span className={`chip ${frame?.lock ? 'is-active' : ''}`} data-tip="Цель внутри кадра головки — наведение идёт по ней.">
+            <span className={`chip ${frame?.lock ? 'is-active' : ''}`} data-tip="Цель в поле зрения ГСН — наведение идёт по ней.">
               {frame?.lock ? 'захват' : 'поиск'}
             </span>
             <span className="chip num" data-tip="Время от пуска.">
@@ -151,6 +157,11 @@ export function FlightWorkspace({
           {shtrumCaption && (
             <div className="shtrum-caption">
               <b>{shtrumCaption.he ? '♂ Штруман' : '♀ Штрумана'}</b> {shtrumCaption.text}
+            </div>
+          )}
+          {wendyCaption && (
+            <div className="shtrum-caption shtrum-caption--wendy">
+              <b>♀ Кобра</b> {wendyCaption.text}
             </div>
           )}
         </div>

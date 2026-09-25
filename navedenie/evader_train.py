@@ -21,6 +21,7 @@ import numpy as np
 
 from navedenie.circuit import FlyCircuit, default_W
 from navedenie.engine import collect
+from navedenie.parallel import parallel_map
 from navedenie.pn import LAWS
 from navedenie.sim import Scenario
 from navedenie.swarm import FlyGenome, W_LIMIT, evolve
@@ -100,6 +101,11 @@ def s_law(sc: Scenario) -> str:
     return sc.law if sc.law in LAWS else "pn"
 
 
+def _battle_job(sc: Scenario, g: FlyGenome, law: str) -> dict:
+    """Задача пула: тот же бой, но с законом ракеты, подставленным в сценарий."""
+    return battle(replace(sc, law=law), g)
+
+
 def evaluate_generation(
     base: Scenario,
     population: list[FlyGenome],
@@ -108,9 +114,11 @@ def evaluate_generation(
 ) -> list[dict]:
     """Каждый ученик — против каждого закона на данной геометрии; сводка — медианы."""
     sc0 = scen if scen is not None else base
+    laws = list(laws)
+    flat = parallel_map(_battle_job, [(sc0, g, law) for g in population for law in laws])
     out = []
-    for g in population:
-        rows = [battle(replace(sc0, law=law), g) for law in laws]
+    for i in range(len(population)):
+        rows = flat[i * len(laws) : (i + 1) * len(laws)]
         out.append(
             {
                 "fitness": float(median(r["fitness"] for r in rows)),

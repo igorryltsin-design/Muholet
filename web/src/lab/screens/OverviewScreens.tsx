@@ -21,17 +21,17 @@ export function RunScreen({ data, onMatlabExport, onTrajExport }: { data: LabDat
     if (c1.current)
       drawChart(c1.current, [{ data: data.zem.map((p) => p.zem), color: P.amber, label: 'h_cv' }], 'Прогноз промаха h_cv по кадрам, м (стремится к нулю — наведение работает)')
     if (c2.current)
-      drawChart(c2.current, [{ data: data.zem.map((p) => p.dev ?? NaN).filter((v) => Number.isFinite(v)), color: P.accent, label: 'откл.' }], 'Отклонение от эталонной траектории МПС, м')
+      drawChart(c2.current, [{ data: data.zem.map((p) => p.dev ?? NaN).filter((v) => Number.isFinite(v)), color: P.accent, label: 'откл.' }], 'Отклонение от эталонной траектории ПН, м')
     if (c3.current) {
       const traj = data.traj
       const series = traj
         ? [
             { data: traj.missile.map((p) => p[1]), color: P.accent, label: 'ракета' },
-            { data: traj.ghost.map((p) => p[1]), color: P.amber, dash: [5, 3], label: 'эталон МПС' },
+            { data: traj.ghost.map((p) => p[1]), color: P.amber, dash: [5, 3], label: 'эталон ПН' },
             { data: traj.target.map((p) => p[1]), color: P.red, dash: [2, 2], label: 'цель' },
           ]
         : []
-      drawChart(c3.current, series, 'Боковая координата по времени, м (ракета против эталона МПС)')
+      drawChart(c3.current, series, 'Боковая координата по времени, м (ракета против эталона ПН)')
     }
     if (c4.current)
       drawChart(c4.current, [{ data: data.zem.map((p) => p.rng / 1000), color: P.accent, label: 'дальность' }], 'Дальность «ракета—цель» по времени, км')
@@ -41,7 +41,7 @@ export function RunScreen({ data, onMatlabExport, onTrajExport }: { data: LabDat
   return (
     <LabScreen
       title="Прогон"
-      about="Кривые последнего пуска: прогноз промаха h_cv (без дальнейшего управления), отклонение от эталонного МПС, боковой канал, дальность и план-вид траекторий. Данные попадают сюда после каждого пуска на сцене."
+      about="Кривые последнего пуска: прогноз промаха h_cv (без дальнейшего управления), отклонение от эталонного ПН, боковой канал, дальность и план-вид траекторий. Данные попадают сюда после каждого пуска на сцене."
       exports={[
         {
           label: 'Прогон: время, дальность, h_cv (CSV)',

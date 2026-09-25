@@ -480,7 +480,7 @@ export function drawPlanView(cv: HTMLCanvasElement, traj: { missile: number[][];
   g.fillStyle = P.accent
   g.fillText('— ракета', w - 10, h - 22)
   g.fillStyle = P.amber
-  g.fillText('– – эталон МПС', w - 10, h - 10)
+  g.fillText('– – эталон ПН', w - 10, h - 10)
 }
 
 /** Гистограмма: ряд bin-ов {lo, hi, n} на числовой оси X (для Monte-Carlo рассеивания). */

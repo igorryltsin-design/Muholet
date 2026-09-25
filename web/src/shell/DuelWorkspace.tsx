@@ -116,6 +116,8 @@ export function DuelWorkspace({
   busy,
   done,
   duelVerdict,
+  shtrumCaption,
+  wendyCaption,
   duelMatrix,
   duelBusy,
   duelRepeats,
@@ -138,6 +140,9 @@ export function DuelWorkspace({
   busy: boolean
   done: string | null
   duelVerdict: { result: 'missile' | 'evader' | null; tSurvived: number | null; fuse: boolean } | null
+  /** юмор-режим: субтитры напарницы-штурмана и «Кобры» — мухи-пилота цели */
+  shtrumCaption: { text: string; he: boolean } | null
+  wendyCaption: { text: string } | null
   duelMatrix: DuelMatrix | null
   duelBusy: boolean
   duelRepeats: number
@@ -634,6 +639,16 @@ export function DuelWorkspace({
           cockpit={false}
           silent={silent}
         />
+        {shtrumCaption && (
+          <div className="shtrum-caption">
+            <b>{shtrumCaption.he ? '♂ Штруман' : '♀ Штрумана'}</b> {shtrumCaption.text}
+          </div>
+        )}
+        {wendyCaption && (
+          <div className="shtrum-caption shtrum-caption--wendy">
+            <b>♀ Кобра</b> {wendyCaption.text}
+          </div>
+        )}
         <div className="scene-overlay scene-overlay--topleft">
           <span className="chip is-warn">дуэль · {sc.duel ? evLabel(sc.evader_law) : 'цель неманёвренная'}</span>
           <span
@@ -721,7 +736,7 @@ export function DuelWorkspace({
             </label>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" className="primary" data-tip="Учить мозг цели: геометрия поколения каждый раз новая, фитнес — выжить, накрутить ракете перегрузки и дальность." disabled={schoolBusy || busy} onClick={runSchool}>
+            <button type="button" className="primary" data-tip="Учить мозг цели: геометрия поколения каждый раз новая, приспособленность — выжить, накрутить ракете перегрузки и дальность." disabled={schoolBusy || busy} onClick={runSchool}>
               {schoolBusy ? 'школа учит…' : 'Учить'}
             </button>
             {schoolBusy && (
@@ -736,7 +751,7 @@ export function DuelWorkspace({
                 <thead>
                   <tr>
                     <th>поколение</th>
-                    <th>фитнес лучшего</th>
+                    <th>приспособленность лучшего</th>
                     <th>выживаемость</th>
                     <th>жизнь чемпиона, с</th>
                   </tr>
@@ -745,7 +760,7 @@ export function DuelWorkspace({
                   {schoolLog.map((r) => (
                     <tr key={r.gen}>
                       <td>{r.gen + 1}</td>
-                      <td className={r.best < 500 ? 'map-win' : undefined} data-tip="Меньше — лучше: отрицательный фитнес = выжила и сожгла ракету; 1000+ = сбита.">
+                      <td className={r.best < 500 ? 'map-win' : undefined} data-tip="Меньше — лучше: отрицательный приспособленность = выжила и сожгла ракету; 1000+ = сбита.">
                         {fmt(r.best, 1)}
                       </td>
                       <td>{Math.round(r.survive * 100)}%</td>
@@ -768,7 +783,7 @@ export function DuelWorkspace({
           )}
           {frame?.evader && (
             <div className="stat-grid">
-              <span data-tip="Выход контура цели-уклониста: команды тангаж/рыскание (−1…1), проклипированные в n_target·g.">
+              <span data-tip="Выход контура цели-уклониста: команды тангаж/рыскание (−1…1), ограниченные доступной перегрузкой n_target·g.">
                 DN цели <b>{fmt(frame.evader.dn.pitch, 2)} / {fmt(frame.evader.dn.yaw, 2)}</b>
               </span>
               <span data-tip="Держит ли сетчатка цели ракету в поле (после задержки сенсора).">
@@ -808,8 +823,8 @@ export function DuelWorkspace({
                     <th>поколение</th>
                     <th>взятия в бою</th>
                     <th>экзамен</th>
-                    <th>фитнес ракеты</th>
-                    <th>фитнес цели</th>
+                    <th>приспособленность ракеты</th>
+                    <th>приспособленность цели</th>
                     <th>жизнь цели, с</th>
                   </tr>
                 </thead>
@@ -918,8 +933,8 @@ export function DuelWorkspace({
                       <th>поколение</th>
                       <th>взятия в бою</th>
                       <th>экзамен</th>
-                      <th>фитнес ракеты</th>
-                      <th>фитнес цели</th>
+                      <th>приспособленность ракеты</th>
+                      <th>приспособленность цели</th>
                     </tr>
                   </thead>
                   <tbody>

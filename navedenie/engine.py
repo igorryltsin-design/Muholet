@@ -232,7 +232,7 @@ def run(sc: Scenario, circuit: FlyCircuit | None = None, evader_circuit: FlyCirc
 
         if sc.mode == "pn":
             if sc.law == "tpn":
-                # истинный МПС: команда N·V_c·ω по нормали к линии визирования
+                # истинная ПН: команда N·V_c·ω по нормали к линии визирования
                 a_cmd = tpn_accel(r, missile.v, target.v, sc.pn_n, sc.n_max)
             elif sc.law == "apn":
                 a_cmd = apn_accel(r, missile.v, target.v, a_t, sc.pn_n, sc.n_max)

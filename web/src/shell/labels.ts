@@ -10,9 +10,9 @@ export const ASPECT_LABEL: Record<Scenario['aspect'], string> = {
 }
 
 export const MODE_LABEL: Record<Scenario['mode'], string> = {
-  pn: 'МПС',
+  pn: 'ПН',
   bio: 'био',
-  both: 'био + МПС',
+  both: 'био + ПН',
 }
 
 export const SPEED_MODE_LABEL: Record<string, string> = {
@@ -27,14 +27,14 @@ export const SPEED_MODE_LABEL: Record<string, string> = {
  *  в navedenie/glossary.py — единый источник терминов (§4). Проверка:
  *  tests/test_glossary.py::test_ts_law_labels_match_python. */
 export const LAW_RU: Record<string, string> = {
-  pn: 'Метод пропорционального сближения (МПС)',
-  tpn: 'Истинный метод пропорционального сближения (команда по нормали к ЛВ)',
-  apn: 'МПС с компенсацией нормального ускорения цели (APN)',
+  pn: 'Метод пропорциональной навигации (ПН)',
+  tpn: 'Истинная пропорциональная навигация (команда по нормали к ЛВ)',
+  apn: 'ПН с компенсацией нормального ускорения цели (APN)',
   pure: 'Метод погони',
   clos: 'Метод трёх точек (CLOS)',
-  pn_gsn: 'МПС по измерениям сенсорного канала ГСН',
-  pn_sched_oracle: 'Экспериментальный МПС с переменным навигационным коэффициентом N по точному состоянию',
-  pn_sched_sensor: 'Экспериментальный МПС с переменным навигационным коэффициентом N по сенсорным измерениям',
+  pn_gsn: 'ПН по измерениям сенсорного канала ГСН',
+  pn_sched_oracle: 'Экспериментальная ПН с переменным навигационным коэффициентом N по точному состоянию',
+  pn_sched_sensor: 'Экспериментальная ПН с переменным навигационным коэффициентом N по сенсорным измерениям',
 }
 
 export function fmt(n: number | null | undefined, d = 1) {
@@ -58,7 +58,7 @@ export const EVENT_RU: Record<string, string> = {
   launch: 'пуск',
   hit: 'перехват',
   lost: 'потеря захвата',
-  miss_pass: 'пролёт',
+  miss_pass: 'отказ перехвата',
   fuse_expired: 'время вышло',
   error: 'ошибка',
 }

@@ -17,7 +17,9 @@ export function SwarmWorkspace({
   onToggleGeometry,
   sceneBadge,
   swarmCurve,
+  swarmValid,
   egg,
+  royCaption,
   silent,
   busy,
   swarmRunning,
@@ -47,7 +49,10 @@ export function SwarmWorkspace({
   onToggleGeometry: () => void
   sceneBadge: string | null
   swarmCurve: number[] | null
+  /** индексы валидационных поколений в кривой */
+  swarmValid: number[]
   egg: boolean
+  royCaption: { text: string } | null
   silent: boolean
   busy: boolean
   swarmRunning: boolean
@@ -94,9 +99,15 @@ export function SwarmWorkspace({
           sceneIdle={false}
           sceneBadge={sceneBadge}
           swarmCurve={swarmCurve}
+          swarmValid={swarmValid}
           cockpit={egg}
           silent={silent}
         />
+        {royCaption && (
+          <div className="shtrum-caption shtrum-caption--wendy">
+            <b>♀ Командир роя</b> {royCaption.text}
+          </div>
+        )}
         <div className="scene-overlay scene-overlay--topleft">
           <span className="chip is-warn">рой · {swarmInfo ? `поколение ${swarmInfo.gen}` : 'эволюция: отбор лучших'}</span>
           {swarmInfo && (
@@ -124,8 +135,8 @@ export function SwarmWorkspace({
           <button type="button" data-tip="Необученная муха и лучшая из роя летят одну цель одновременно — видно, чему рой научился." disabled={busy || swarmRunning} onClick={onRookieVsVeteran}>
             стажёр против ветерана
           </button>
-          <button type="button" data-tip="Обученная муха против эталонного МПС на одной цели — кто точнее." disabled={busy || swarmRunning} onClick={onFlyVsPN}>
-            муха против МПС
+          <button type="button" data-tip="Обученная муха против эталонного ПН на одной цели — кто точнее." disabled={busy || swarmRunning} onClick={onFlyVsPN}>
+            муха против ПН
           </button>
         </section>
 
@@ -172,13 +183,13 @@ export function SwarmWorkspace({
           <h3>Поколение</h3>
           <div className="stat-grid">
             <span data-tip="Промах лучшей мухи последнего поколения.">
-              лучший промах <b>{swarmInfo ? `${fmt(swarmInfo.bestMiss, 0)} м` : '—'}</b>
+              наименьшее сближение <b>{swarmInfo ? `${fmt(swarmInfo.bestMiss, 0)} м` : '—'}</b>
             </span>
             <span data-tip="Чемпион на фиксированном эталонном трио (обновляется на валидационных поколениях).">
               чемпион (эталон) <b>{swarmInfo?.champion !== undefined ? `${fmt(swarmInfo.champion, 0)} м` : '—'}</b>
             </span>
             <span>
-              мух био / МПС <b>{swarmInfo ? `${swarmInfo.bio} / ${swarmInfo.pn}` : '—'}</b>
+              мух био / ПН <b>{swarmInfo ? `${swarmInfo.bio} / ${swarmInfo.pn}` : '—'}</b>
             </span>
           </div>
         </section>

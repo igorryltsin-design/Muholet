@@ -575,8 +575,17 @@ export async function runGeneration(
   population: FlyGenome[],
   cfg: { eliteK: number; mutation: number; seed: number },
 ): Promise<GenerationResult> {
-  const local = (pop: FlyGenome[]): GenerationResult => {
-    const perSc = scenarios.map((sc) => pop.map((fly) => flyRollout(sc, fly)))
+  const local = async (pop: FlyGenome[]): Promise<GenerationResult> => {
+    // прогон по мухам с уступкой потока: без сервера окно не замирает на всём поколении
+    const perSc: FlyResult[][] = []
+    for (const s of scenarios) {
+      const rows: FlyResult[] = []
+      for (let i = 0; i < pop.length; i += 1) {
+        rows.push(flyRollout(s, pop[i]))
+        if (i % 6 === 5) await new Promise<void>((r) => setTimeout(r, 0))
+      }
+      perSc.push(rows)
+    }
     const fits = pop.map((_, i) => median(perSc.map((res) => res[i].fitness)))
     const misses = pop.map((_, i) => median(perSc.map((res) => res[i].miss_m)))
     const bestIdx = fits.reduce((b, f, i) => (f < fits[b] ? i : b), 0)

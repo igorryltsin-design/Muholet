@@ -33,7 +33,7 @@ export type Scenario = {
   n_target: number
   maneuver: Maneuver
   pn_n: number
-  /** МПС с переменным N: N = clip(N0 + k_rho·rho, N_min, N_max) — отдельный контрольный закон */
+  /** ПН с переменным N: N = clip(N0 + k_rho·rho, N_min, N_max) — отдельный контрольный закон */
   pn_sched_n0: number
   pn_sched_k_rho: number
   pn_sched_n_min: number
@@ -112,7 +112,7 @@ export type EvaderSnap = {
   lock: boolean
 }
 
-/** Муха роя: мозг дрозофилы (bio) или постоянный МПС (pn). */
+/** Муха роя: мозг дрозофилы (bio) или постоянный ПН (pn). */
 export type FlyGenome = {
   kind: 'bio' | 'pn'
   /** Развёрнутые в строку веса 2×8 — только для bio. */
@@ -243,7 +243,7 @@ export type RunMetrics = {
   /** control effort: ∫|a_cmd|/g dt, g·с */
   nInt: number
   lockFrac: number
-  /** среднее отклонение от траектории призрака-МПС (эталона), м */
+  /** среднее отклонение от траектории призрака-ПН (эталона), м */
   refDev: number | null
   /** нормированное СКО рассогласования (к начальной дальности) */
   refNrms: number | null
@@ -311,7 +311,7 @@ export type GenPoint = {
   diversity?: number
   /** доля перехватов в поколении, 0…1 */
   hitRate?: number
-  /** лучший промах на эталонном трио (валидационные поколения) */
+  /** наименьшее сближение на эталонном трио (валидационные поколения) */
   champ?: number
   /** поколение посчитано локальной демо-моделью (не серверной научной) */
   local?: boolean

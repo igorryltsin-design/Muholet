@@ -8,7 +8,7 @@ import type { Scenario } from '../types'
 export function AdvancedScenarioSettings({ sc, set }: { sc: Scenario; set: <K extends keyof Scenario>(key: K, value: Scenario[K]) => void }) {
   return (
     <div className="fields">
-      <label data-tip="Общее узкое поле эталонного МПС и центральное разрешение БИО (фовея): около этого угла цель видна точно.">
+      <label data-tip="Общее узкое поле эталонного ПН и центральное разрешение БИО (фовея): около этого угла цель видна точно.">
         Узкий кадр (эталон), град
         <input type="number" value={sc.fov_deg} onChange={(e) => set('fov_deg', Number(e.target.value))} />
       </label>

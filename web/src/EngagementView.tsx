@@ -95,7 +95,7 @@ function makeLabel(text: string, color: string, scale = 1.6) {
   const draw = (col: string, newText?: string) => {
     if (newText !== undefined) text = newText
     g.font = '600 40px "Chakra Petch", sans-serif'
-    // холст по ширине текста с запасом: длинные подписи («МПС (эталон) · 41 м»)
+    // холст по ширине текста с запасом: длинные подписи («ПН (эталон) · 41 м»)
     // на фиксированных 320px резались по краям — пропадала ножка у «П»
     const w = Math.max(64, Math.ceil(g.measureText(text).width) + 32)
     if (c.width !== w) c.width = w // ресайз сбрасывает состояние контекста — шрифт задаём заново
@@ -106,6 +106,7 @@ function makeLabel(text: string, color: string, scale = 1.6) {
     g.textBaseline = 'middle'
     g.fillText(text, c.width / 2, c.height / 2)
     tex.needsUpdate = true
+    spr.userData.text = text // сверка подписей живой проверкой по графу сцены
     // мир: высота подписи постоянна (scale·0.25), ширина растёт с текстом;
     // размер глифов совпадает со старым поведением (320-холст, scale-ширина)
     spr.scale.set((scale * c.width) / 320, scale * 0.25, 1)
@@ -269,6 +270,7 @@ export function EngagementView({
   sceneIdle,
   sceneBadge,
   swarmCurve,
+  swarmValid,
   cockpit,
   cofly,
   silent,
@@ -284,8 +286,10 @@ export function EngagementView({
   sceneIdle: boolean
   /** подпись поверх сцены: эпизод обучения / поколение роя / демо */
   sceneBadge?: string | null
-  /** кривая обучения роя: лучший промах по поколениям */
+  /** кривая обучения роя: наименьшее сближение по поколениям */
   swarmCurve?: number[] | null
+  /** индексы валидационных поколений в кривой (где мерили эталонное трио) */
+  swarmValid?: number[]
   /** пасхалка: муха за штурвалом (разрез корпуса + рычаги по командам DN) */
   cockpit?: boolean
   /** юмор-режим: кабина вскрывается и за первой мухой садится вторая-пассажирка
@@ -1188,7 +1192,7 @@ export function EngagementView({
       const dnNow = fr?.circuit?.dn ?? { pitch: 0, yaw: 0 }
       const flyLoad = Math.min(1, (Math.abs(dnNow.pitch) + Math.abs(dnNow.yaw)) / 1.4)
       const finalEvent =
-        fr?.event === 'перехват' || fr?.event === 'hit' || fr?.event === 'промах' || fr?.event === 'miss_pass' || fr?.event === 'пролёт'
+        fr?.event === 'перехват' || fr?.event === 'hit' || fr?.event === 'промах' || fr?.event === 'miss_pass' || fr?.event === 'отказ перехвата'
       const flyingNow = Boolean(!silentRef.current && !finalEvent && (pb ? pb.race && prog < 1 : fr && !idleRef.current))
       setBuzz(flyLoad, flyingNow)
       if (flyingNow && flyLoad > 0.78) say('overload')
@@ -1236,7 +1240,7 @@ export function EngagementView({
           aArrow.visible = false
         }
         if (chip) {
-          chip.textContent = `t_cpa ${tgo.toFixed(1)} с · прогноз h_cv ${(zem.length() * 1000).toFixed(0)} м · упреждение ${gamma.toFixed(0)}°`
+          chip.textContent = `t_cpa ${tgo.toFixed(1)} с · прогноз h_cv ${(zem.length() * 1000).toFixed(0)} м · угол упреждения ${gamma.toFixed(0)}°`
           chip.style.display = 'block'
         }
       } else if (chip) {
@@ -1269,6 +1273,11 @@ export function EngagementView({
           if (!bb.isEmpty()) {
             const sz = bb.getSize(new THREE.Vector3())
             placeGrid(bb.getCenter(new THREE.Vector3()), Math.max(sz.x, sz.z))
+            // численность роя — подписью над веером траекторий поколения
+            const pop = makeLabel(`рой · ${pb.results.length} мух`, dayRef.current ? THEME_DAY.z : THEME_NIGHT.z, 0.5)
+            pop.spr.position.copy(bb.getCenter(new THREE.Vector3())).add(new THREE.Vector3(0, 1.1, 0))
+            scene.add(pop.spr)
+            swarmLabels.push(pop.spr)
           }
           const T = dayRef.current ? THEME_DAY : THEME_NIGHT
           const fits = pb.results.map((res) => res.fitness)
@@ -1281,7 +1290,11 @@ export function EngagementView({
             const col = best
               ? new THREE.Color(T.swarmBest)
               : new THREE.Color(T.swarmBad).lerp(new THREE.Color(T.swarmGood), k)
-            const pts = res.traj_m.map(to3)
+            // длинные траектории прореживаем вдвое: 48 линий полной истории
+            // перестраиваются каждое поколение — геометрия вдвое легче, глаз не видит
+            const src = res.traj_m
+            const stride = src.length > 400 ? 2 : 1
+            const pts = src.filter((_, i) => i % stride === 0 || i === src.length - 1).map(to3)
             if (pts.length < 2) pts.push(pts[0].clone())
             const line = new THREE.Line(
               new THREE.BufferGeometry().setFromPoints(pts),
@@ -1490,6 +1503,7 @@ export function EngagementView({
   }, [])
 
   const curve = swarmCurve && swarmCurve.length >= 2 ? swarmCurve : null
+  const validIdx = curve && swarmValid ? swarmValid.filter((i) => i >= 0 && i < curve.length) : []
   const cw = 214
   const ch = 86
   const pad = 8
@@ -1505,10 +1519,23 @@ export function EngagementView({
       <div className="geo-chip" ref={chipRef} />
       {sceneBadge && <div className="scene-badge">{sceneBadge}</div>}
       {curve && (
-        <svg className="swarm-curve" viewBox={`0 0 ${cw} ${ch}`} data-tip="Эволюция роя: лучший промах (м) по поколениям.">
+        <svg className="swarm-curve" viewBox={`0 0 ${cw} ${ch}`} data-tip="Эволюция роя: наименьшее сближение (м) по поколениям; пунктирные тики — валидация на эталонном трио.">
           <text x={pad} y={12} fill="#7dffc8" fontSize="9">
-            эволюция: лучший промах {Math.round(lo)} → {Math.round(curve[curve.length - 1])} м
+            эволюция: наименьшее сближение {Math.round(lo)} → {Math.round(curve[curve.length - 1])} м
           </text>
+          {validIdx.map((i) => (
+            <line
+              key={`v${i}`}
+              x1={px(i)}
+              x2={px(i)}
+              y1={16}
+              y2={ch - pad + 2}
+              stroke="#7dffc8"
+              strokeWidth="0.8"
+              strokeDasharray="2 2"
+              opacity="0.45"
+            />
+          ))}
           <polyline points={curvePts} fill="none" stroke="#e7c15a" strokeWidth="1.6" />
           {curve.map((v, i) => (
             <circle
@@ -1520,6 +1547,11 @@ export function EngagementView({
               opacity={i === curve.length - 1 ? 1 : 0.55}
             />
           ))}
+          {validIdx.length > 0 && (
+            <text x={cw - pad} y={ch - 1} textAnchor="end" fill="#7dffc8" fontSize="7.5" opacity="0.8">
+              тик — валидация
+            </text>
+          )}
         </svg>
       )}
       <p className="view-hint">левая кнопка — вращать · колесо — масштаб · X красная — дальность · Y синяя — бок · Z зелёная — высота, км</p>

@@ -23,6 +23,7 @@ import numpy as np
 
 from navedenie.circuit import FEAT_DIM, FlyCircuit
 from navedenie.engine import collect
+from navedenie.parallel import parallel_map
 from navedenie.evader_train import (
     TRAIN_DT,
     TRAIN_STRIDE,
@@ -106,13 +107,14 @@ def queen_generation(
     # (медиана по ракетам) — ни одна сторона не «специализируется на одном» сопернике
     m_rows: list[list[float]] = [[] for _ in missile_pop]
     e_rows: list[list[float]] = [[] for _ in evader_pop]
-    battles = []
+    flat = parallel_map(brain_battle, [(sc, mg, eg) for mg in missile_pop for eg in evader_pop])
+    ne = len(evader_pop)
     for mi, mg in enumerate(missile_pop):
-        for ei, eg in enumerate(evader_pop):
-            b = brain_battle(sc, mg, eg)
+        for ei in range(ne):
+            b = flat[mi * ne + ei]
             m_rows[mi].append(b["missile_fitness"])
             e_rows[ei].append(b["evader_fitness"])
-            battles.append(b)
+    battles = flat
     m_fit = [_median(r) for r in m_rows]
     e_fit = [_median(r) for r in e_rows]
 
@@ -121,7 +123,7 @@ def queen_generation(
     nxt_m = evolve(missile_pop, m_fit, elite_k=max(1, elite_k), mutation=mutation, seed=seed)
     nxt_e = evolve(evader_pop, e_fit, elite_k=max(1, elite_k), mutation=mutation, seed=seed + 1)
 
-    exam = [brain_battle(replace(sc, **g), missile_pop[m_best], evader_pop[e_best]) for g in EXAM_GEOMETRY]
+    exam = parallel_map(brain_battle, [(replace(sc, **g), missile_pop[m_best], evader_pop[e_best]) for g in EXAM_GEOMETRY])
     return {
         "gen": int(gen),
         "scenario": {"aspect": sc.aspect, "range_m": sc.range_m, "v_t": sc.v_t, "off_axis_m": sc.off_axis_m},
