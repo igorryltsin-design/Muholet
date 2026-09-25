@@ -607,6 +607,37 @@ body.theme-day .drawer-scrim { background: rgba(30, 45, 40, 0.3); }
 .ws-card h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text-secondary); }
 .ws-card .fields { padding: 0; }
 .ws-card--col { grid-template-columns: 1fr; }
+/* переключение слоёв внутри пространства: вкладка-полоска над карточками */
+.ws-tabs { display: flex; gap: 6px; }
+.ws-tabs button {
+  flex: 1;
+  min-height: 30px;
+  font: inherit;
+  font-size: 14px;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--border-default);
+  background: var(--surface-panel);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.ws-tabs button.is-on { border-color: var(--accent-primary); color: var(--accent-primary); background: var(--surface-raised); }
+/* второстепенное в складке: заголовок остаётся заголовком, карточка — под кликом */
+.ws-fold { border: 1px dashed var(--border-default); border-radius: var(--radius-m); padding: 0 10px; }
+.ws-fold > summary {
+  margin: 0 -10px;
+  padding: 9px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style-position: inside;
+}
+.ws-fold[open] > summary { color: var(--accent-primary); }
+.ws-fold > .ws-card { border: none; background: none; padding: 0 2px 10px; }
+/* полоска геометрии учебного боя: чем учимся и где именно встречается пара */
+.duel-geo { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.duel-geo__num input { width: 54px; min-height: 24px; padding: 0 4px; font: inherit; font-size: 13px; }
+.duel-geo__opt { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); }
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
 .stat-grid > span { font-size: 14px; color: var(--text-muted); min-width: 0; }
 .stat-grid b { color: var(--accent-primary); font-family: var(--font-mono); font-weight: 500; }

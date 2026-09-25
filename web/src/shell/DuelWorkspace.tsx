@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { EngagementView, type Playback } from '../lazyViews'
-import { EVADER_RU, LAW_RU, fmt } from './labels'
+import { ASPECT_LABEL, EVADER_RU, LAW_RU, fmt } from './labels'
 import type { DuelMatrix, FlyGenome, Scenario } from '../types'
 import type { CamMode, Frame } from '../types'
 
@@ -18,6 +18,55 @@ const evLabel = (id: string) => (id === 'straight' ? 'неманёвренная
 /** единый id текущей стороны ракеты из сценария */
 export function missileIdOf(sc: Scenario): string {
   return sc.mode === 'bio' ? `bio:${sc.brain}` : sc.law
+}
+
+/** что учим в одном управляющем цикле: цель, обе стороны вкладкой, обе стороны
+ *  стендом (фон переживает закрытие вкладки) */
+type LearnMode = 'evader' | 'queen' | 'server'
+const LEARN_MODES: { id: LearnMode; label: string; tip: string; max: number }[] = [
+  { id: 'evader', label: 'цель', tip: 'Школа уклониста: ракета — фиксированный закон, учится только мозг цели. Поколение ~10–15 с на 12 учениках: бои летят на всех ядрах стенда.', max: 40 },
+  { id: 'queen', label: 'обе', tip: 'Красная королева: ракета и цель — обе обучаемые схемы, каждая берёт силу у другой. Поколение ~30–60 с.', max: 30 },
+  { id: 'server', label: 'обе на сервере', tip: 'Та же гонка, но считает её стенд в фоновом потоке: вкладку можно закрыть и вернуться к готовности. Поколение ~2 с при pop=4.', max: 60 },
+]
+
+/** геометрия боя одним кликом: меняет текущий сценарий, а не дефолт вкладки */
+const GEO_PRESETS: { id: Scenario['aspect']; label: string; off: number; tip: string }[] = [
+  { id: 'head-on', label: 'лоб', off: 420, tip: 'Встречные: цель идёт почти на ракету, боковое смещение 420 м.' },
+  { id: 'beam', label: 'пересечение', off: 900, tip: 'Цель идёт поперёк: большое боковое смещение 900 м, точке встречи надо довернуть.' },
+  { id: 'tail-chase', label: 'вдогон', off: 120, tip: 'Погоня сзади: ракета догоняет цель по её же курсу — манёвр цели почти ничего не меняет.' },
+]
+
+/** настройки вкладки переживают перезагрузку: слой, режим учёбы и показ боёв */
+const DUEL_PREFS = 'muholet-duel'
+function readDuelPrefs(): { layer: 'school' | 'duels'; mode: LearnMode; show: boolean } {
+  try {
+    const d = JSON.parse(localStorage.getItem(DUEL_PREFS) || '') as Record<string, unknown>
+    return {
+      layer: d.layer === 'duels' ? 'duels' : 'school',
+      mode: d.mode === 'server' || d.mode === 'queen' ? (d.mode as LearnMode) : 'evader',
+      show: d.show === true,
+    }
+  } catch {
+    return { layer: 'school', mode: 'evader', show: false }
+  }
+}
+
+/** бой, который стенд досчитывает специально для сцены (флаг replay в ответе
+ *  поколения): траектории обеих сторон + момент, когда цель начала маневрировать */
+export type DuelReplay = {
+  label: string
+  traj_m: number[][]
+  traj_t: number[][]
+  hit: boolean
+  t_end: number
+  cpa_m: number
+  missile_n_int: number
+  n_target_g: number
+  turn: { t_s: number; range_m: number } | null
+  scenario: { aspect: string; range_m: number; v_t: number; off_axis_m: number }
+  fitness?: number
+  missile_fitness?: number
+  evader_fitness?: number
 }
 
 /** снимок серверного самообучения (navedenie/queen_train.py): фон стенда крутит
@@ -49,6 +98,8 @@ type QueenTrainStatus = {
   error: string | null
   stop_requested: boolean
   seconds: number
+  /** бой последнего досчитанного поколения — только пока задача жива (см. status()) */
+  replay?: DuelReplay | null
 }
 
 /** «Хроника войн» (navedenie/queen_chronicle.py): доигранная кампания с кривой
@@ -125,6 +176,7 @@ export function DuelWorkspace({
   onRunMatrix,
   onExportCsv,
   onDuelNow,
+  onShowReplay,
 }: {
   frame: Frame | null
   sc: Scenario
@@ -151,11 +203,29 @@ export function DuelWorkspace({
   onExportCsv: () => void
   /** запуск прогона «прямо сейчас» с надбавкой к сценарию (не ждёт setState) */
   onDuelNow: (patch: Partial<Scenario>) => void
+  /** выпустить учебный бой поколения на сцену: проигрывание траекторий вместо цифр */
+  onShowReplay: (r: DuelReplay) => void
 }) {
   const cellOf = (row: string, col: string) => duelMatrix?.cells.find((c) => c.row === row && c.col === col) ?? null
   const wins = duelMatrix?.cells.filter((c) => c.win === 'missile').length ?? 0
   const t = frame?.t ?? 0
   const over = duelVerdict ? !busy : t > sc.fuse_life_s + 1e-9
+
+  // ── показ учёбы: стенд досылает бой поколения, он уходит на сцену и в память
+  // вкладки (из него же считается честный ответ, когда цель начала крутить)
+  const [lesson, setLesson] = useState<DuelReplay | null>(null)
+  const busyRef = useRef(busy)
+  useEffect(() => {
+    busyRef.current = busy
+  }, [busy])
+
+  const showLesson = (r?: DuelReplay | null) => {
+    if (!r || !(r.traj_m?.length > 0)) return
+    // живой прогон не перекрываем: сцена и так играет бой, а учебный кадрился бы поверх
+    if (busyRef.current) return
+    setLesson(r)
+    onShowReplay(r)
+  }
 
   // ── школа уклониста: цикл поколений живёт здесь, стенд отдаёт по одной генерации
   const [schoolBusy, setSchoolBusy] = useState(false)
@@ -178,17 +248,19 @@ export function DuelWorkspace({
         const res = await fetch('/api/evader/gen', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scenario: sc, population: popRef.current, gen: g, seed: 7, exam_every: 5 }),
+          body: JSON.stringify({ scenario: sc, population: popRef.current, gen: g, seed: 7, exam_every: 5, replay: true }),
         })
         if (!res.ok) throw new Error(`стенд ${res.status}`)
         const d = (await res.json()) as {
           stats: { best: number; best_idx: number; survive_rate: number; best_t_survived: number }
           results: { fly: FlyGenome }[]
           next_population: FlyGenome[]
+          replay?: DuelReplay
         }
         popRef.current = d.next_population
         setChamp(d.results[d.stats.best_idx]?.fly ?? null)
         setSchoolLog((rows) => [...rows, { gen: g, best: d.stats.best, survive: d.stats.survive_rate, t: d.stats.best_t_survived }])
+        showLesson(d.replay)
       }
     } catch {
       setSchoolMsg('Стенд не отвечает — школа уклониста считается только на сервере.')
@@ -238,7 +310,7 @@ export function DuelWorkspace({
         const res = await fetch('/api/queen/gen', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scenario: sc, missile_population: mPopRef.current, evader_population: ePopRef.current, gen: g, seed: 7 }),
+          body: JSON.stringify({ scenario: sc, missile_population: mPopRef.current, evader_population: ePopRef.current, gen: g, seed: 7, replay: true }),
         })
         if (!res.ok) throw new Error(`стенд ${res.status}`)
         const d = (await res.json()) as {
@@ -247,11 +319,13 @@ export function DuelWorkspace({
           champions: { missile: FlyGenome; evader: FlyGenome }
           stats: { p_hit_ring: number; missile_best: number; evader_best: number }
           exam: { p_hit: number; t_survived_median: number }
+          replay?: DuelReplay
         }
         mPopRef.current = d.missile_population
         ePopRef.current = d.evader_population
         setQueenChamps(d.champions)
         setQueenLog((rows) => [...rows, { gen: g, ring: d.stats.p_hit_ring, exam: d.exam.p_hit, m: d.stats.missile_best, e: d.stats.evader_best, t: d.exam.t_survived_median }])
+        showLesson(d.replay)
       }
     } catch {
       setQueenMsg('Стенд не отвечает — королева воюет только на сервере.')
@@ -507,6 +581,9 @@ export function DuelWorkspace({
   }
   const srvTimer = useRef<number | null>(null)
   const srvSettled = useRef(false)
+  // показ поколения из фона: один бой на каждое досчитанное поколение, а не
+  // перезапуск одной и той же анимации на каждом опросе раз в 2 с
+  const srvShown = useRef('')
 
   const srvPollStop = () => {
     if (srvTimer.current !== null) window.clearTimeout(srvTimer.current)
@@ -516,6 +593,12 @@ export function DuelWorkspace({
   const srvApply = (d: QueenTrainStatus) => {
     setSrv(d)
     if (d.champions) setQueenChamps(d.champions)
+    // фоновая кампания показывает бой поколения только по тумблеру: цифры идут в
+    // любом случае, а сцена по умолчанию не дёргается — вручную учатся видно всегда
+    if (showLessons && d.replay && d.replay.label !== srvShown.current) {
+      srvShown.current = d.replay.label
+      showLesson(d.replay)
+    }
     if (d.running) {
       srvSettled.current = false
     } else if (!srvSettled.current && d.generations_done > 0) {
@@ -547,6 +630,7 @@ export function DuelWorkspace({
   const srvStart = async () => {
     setSrvMsg(null)
     srvSettled.current = false
+    srvShown.current = ''
     try {
       const res = await fetch('/api/queen/train', {
         method: 'POST',
@@ -617,6 +701,69 @@ export function DuelWorkspace({
     }
   }
 
+  // ── два слоя вместо восьми карточек: сначала смотреть, как учатся две мухи,
+  // потом сводить дуэли. Настройки читаются синхронно в инициализаторе useState:
+  // effect-restore при двойном маунте StrictMode затирал бы сохранённое дефолтом
+  const [layer, setLayer] = useState<'school' | 'duels'>(() => readDuelPrefs().layer)
+  const [learnMode, setLearnMode] = useState<LearnMode>(() => readDuelPrefs().mode)
+  const [showLessons, setShowLessons] = useState(() => readDuelPrefs().show)
+  useEffect(() => {
+    try {
+      localStorage.setItem(DUEL_PREFS, JSON.stringify({ layer, mode: learnMode, show: showLessons }))
+    } catch {
+      /* приватный режим — настройка проживёт до перезагрузки */
+    }
+  }, [layer, learnMode, showLessons])
+
+  // один цикл поколений на троих: поле и пуск общие, считается выбранный режим
+  const gens = learnMode === 'evader' ? schoolGens : learnMode === 'queen' ? queenGens : srvGens
+  const setGens = (n: number) => {
+    const max = LEARN_MODES.find((m) => m.id === learnMode)?.max ?? 40
+    const v = Math.max(1, Math.min(max, Math.round(n) || 1))
+    if (learnMode === 'evader') setSchoolGens(v)
+    else if (learnMode === 'queen') setQueenGens(v)
+    else setSrvGens(v)
+  }
+  const learning = schoolBusy || queenBusy || Boolean(srv?.running)
+  const startLabel =
+    learnMode === 'evader' ? (schoolBusy ? 'школа учит…' : 'Учить') : learnMode === 'queen' ? (queenBusy ? 'война…' : 'Воевать') : srv?.running ? 'воюет в фоне…' : 'Воевать в фоне'
+  const startLearning = () => {
+    if (learnMode === 'evader') void runSchool()
+    else if (learnMode === 'queen') void runQueen()
+    else void srvStart()
+  }
+  const stopLearning = () => {
+    if (learnMode === 'evader') schoolStop.current = true
+    else if (learnMode === 'queen') queenStop.current = true
+    else void srvStop()
+  }
+  /** выплата за учёбу: чемпионы последней гонки нужны обоим режимам коэволюции —
+   *  и ручному («Красная королева»), и фоновому («Самообучение на сервере») */
+  const champBlock = (
+    <div className="stat-grid">
+      <span data-tip="Чемпионы последнего поколения: обе стороны сажают свои выученные веса.">
+        чемпионы · усиление <b>{fmt(queenChamps?.missile.gain, 2)}</b> / <b>{fmt(queenChamps?.evader.gain, 2)}</b>
+      </span>
+      <button type="button" onClick={applyQueens} data-tip="Ракету — в живой мозг stub (mode=bio), цель — в weights_evader.npz; дальше «Пуск» летает их между собой.">
+        Применить чемпионов
+      </button>
+      <button type="button" onClick={duelChampions} data-tip="Один клик: посадить обоих чемпионов и сразу выпустить живой бой — стрим двух мозгов по websocket, без ожидания «Пуск».">
+        Дуэль чемпионов
+      </button>
+      <input
+        type="text"
+        value={ringLabel}
+        maxLength={40}
+        placeholder="имя дуэта"
+        onChange={(e) => setRingLabel(e.target.value)}
+        data-tip="Имя для полки ринга; пусто — дуэт получит номер."
+      />
+      <button type="button" onClick={shelfDuel} data-tip="Записать пару выученных мозгов на полку «Ринга чемпионов»: дальше они стреляют друг в друга и против других дуэтов, веса переживают перезапуск.">
+        На полку ринга
+      </button>
+    </div>
+  )
+
   // на входе в космос проверяем фон: королева могла начать войну в прошлой сессии
   useEffect(() => {
     void srvPoll()
@@ -674,6 +821,18 @@ export function DuelWorkspace({
       <div className="ws-side">
         <h2 className="ws-side__title">Дуэль мух</h2>
 
+        {/* два слоя вместо восьми карточек подряд: сначала смотреть, как учатся
+            две мухи, потом сводить дуэли. «Стороны» — над слоями: и закон ракеты,
+            и включённый манёвр цели нужны обеим половинам вкладки */}
+        <div className="ws-tabs">
+          <button type="button" className={layer === 'school' ? 'is-on' : undefined} onClick={() => setLayer('school')} data-tip="Учёба: цикл поколений и живой показ того, как мухи учатся друг против друга.">
+            Учёба
+          </button>
+          <button type="button" className={layer === 'duels' ? 'is-on' : undefined} onClick={() => setLayer('duels')} data-tip="Дуэли: готовые стороны, ринг чемпионов и матрица «закон против закона».">
+            Дуэли
+          </button>
+        </div>
+
         <section className="ws-card">
           <h3>Стороны</h3>
           <div className="fields fields--2" style={{ padding: 0 }}>
@@ -727,582 +886,612 @@ export function DuelWorkspace({
           </p>
         </section>
 
-        <section className="ws-card">
-          <h3>Школа уклониста</h3>
-          <div className="fields fields--2" style={{ padding: 0 }}>
-            <label data-tip="Сколько поколений эволюции провести: каждый ученик — мозги 2×10 весов DN; отбор по исходам боёв против pn/tpn/apn.">
-              поколений
-              <input type="number" min={1} max={40} value={schoolGens} onChange={(e) => setSchoolGens(Math.max(1, Math.min(40, Number(e.target.value) || 1)))} />
-            </label>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" className="primary" data-tip="Учить мозг цели: геометрия поколения каждый раз новая, приспособленность — выжить, накрутить ракете перегрузки и дальность." disabled={schoolBusy || busy} onClick={runSchool}>
-              {schoolBusy ? 'школа учит…' : 'Учить'}
-            </button>
-            {schoolBusy && (
-              <button type="button" onClick={() => { schoolStop.current = true }}>
-                Стоп
-              </button>
-            )}
-          </div>
-          {schoolLog.length > 0 && (
-            <div className="table-card">
-              <table>
-                <thead>
-                  <tr>
-                    <th>поколение</th>
-                    <th>приспособленность лучшего</th>
-                    <th>выживаемость</th>
-                    <th>жизнь чемпиона, с</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {schoolLog.map((r) => (
-                    <tr key={r.gen}>
-                      <td>{r.gen + 1}</td>
-                      <td className={r.best < 500 ? 'map-win' : undefined} data-tip="Меньше — лучше: отрицательный приспособленность = выжила и сожгла ракету; 1000+ = сбита.">
-                        {fmt(r.best, 1)}
-                      </td>
-                      <td>{Math.round(r.survive * 100)}%</td>
-                      <td>{fmt(r.t, 1)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {champ && (
-            <div className="stat-grid">
-              <span data-tip="Веса DN чемпиона (первая строка — тангаж, вторая — рыскание) и усиление контура.">
-                чемпион · усиление <b>{fmt(champ.gain, 2)}</b>
-              </span>
-              <button type="button" onClick={applyChamp} data-tip="Сохранить веса чемпиона в data/weights_evader.npz и посадить его за штурвал цели (evader_law=brain).">
-                Применить чемпиона
-              </button>
-            </div>
-          )}
-          {frame?.evader && (
-            <div className="stat-grid">
-              <span data-tip="Выход контура цели-уклониста: команды тангаж/рыскание (−1…1), ограниченные доступной перегрузкой n_target·g.">
-                DN цели <b>{fmt(frame.evader.dn.pitch, 2)} / {fmt(frame.evader.dn.yaw, 2)}</b>
-              </span>
-              <span data-tip="Держит ли сетчатка цели ракету в поле (после задержки сенсора).">
-                {frame.evader.lock ? 'видит ракету' : 'не видит ракету'} · {frame.evader.weights}
-              </span>
-            </div>
-          )}
-          <p className="lab-hint" style={{ margin: 0 }}>
-            врождённый рефлекс — разворот к пеленгу (бабочка на огонь): эволюция учит цель разворачиваться ОТ ракеты
-          </p>
-          {schoolMsg && <p className="lab-hint" style={{ margin: 0 }}>{schoolMsg}</p>}
-        </section>
-
-        <section className="ws-card">
-          <h3>Красная королева: мозг против мозга</h3>
-          <div className="fields fields--2" style={{ padding: 0 }}>
-            <label data-tip="Сколько поколений гонки вооружений: ракета и цель — обе обучаемые схемы; каждое поколение каждый летает против каждого, отбор по медианному исходу.">
-              поколений
-              <input type="number" min={1} max={30} value={queenGens} onChange={(e) => setQueenGens(Math.max(1, Math.min(30, Number(e.target.value) || 1)))} />
-            </label>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" className="primary" data-tip="Обоюдное самообучение: ракета учится брать, цель — уходить. Поколение ~30–60 с: бой идёт на стенде." disabled={queenBusy || busy} onClick={runQueen}>
-              {queenBusy ? 'война…' : 'Воевать'}
-            </button>
-            {queenBusy && (
-              <button type="button" onClick={() => { queenStop.current = true }}>
-                Стоп
-              </button>
-            )}
-          </div>
-          {queenLog.length > 0 && (
-            <div className="table-card">
-              <table>
-                <thead>
-                  <tr>
-                    <th>поколение</th>
-                    <th>взятия в бою</th>
-                    <th>экзамен</th>
-                    <th>приспособленность ракеты</th>
-                    <th>приспособленность цели</th>
-                    <th>жизнь цели, с</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {queenLog.map((r) => (
-                    <tr key={r.gen}>
-                      <td>{r.gen + 1}</td>
-                      <td>{Math.round(r.ring * 100)}%</td>
-                      <td data-tip="Чемпион против чемпиона на трёх фиксированных геометриях.">
-                        {Math.round(r.exam * 100)}%
-                      </td>
-                      <td className={r.m < 500 ? 'map-win' : undefined} data-tip="Меньше — лучше: <500 = взял (время перехвата + усилие); 1000+ = промах.">
-                        {fmt(r.m, 1)}
-                      </td>
-                      <td className={r.e < 500 ? 'map-win' : undefined} data-tip="Меньше — лучше: отрицательный = выжила и сожгла ракету; 1000+ = сбита.">
-                        {fmt(r.e, 1)}
-                      </td>
-                      <td>{fmt(r.t, 1)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {queenChamps && (
-            <div className="stat-grid">
-              <span data-tip="Чемпионы последнего поколения: обе стороны сажают свои выученные веса.">
-                чемпионы · усиление <b>{fmt(queenChamps.missile.gain, 2)}</b> / <b>{fmt(queenChamps.evader.gain, 2)}</b>
-              </span>
-              <button type="button" onClick={applyQueens} data-tip="Ракету — в живой мозг stub (mode=bio), цель — в weights_evader.npz; дальше «Пуск» летает их между собой.">
-                Применить чемпионов
-              </button>
-              <button type="button" onClick={duelChampions} data-tip="Один клик: посадить обоих чемпионов и сразу выпустить живой бой — стрим двух мозгов по websocket, без ожидания «Пуск».">
-                Дуэль чемпионов
-              </button>
-              <input
-                type="text"
-                value={ringLabel}
-                maxLength={40}
-                placeholder="имя дуэта"
-                onChange={(e) => setRingLabel(e.target.value)}
-                data-tip="Имя для полки ринга; пусто — дуэт получит номер."
-              />
-              <button type="button" onClick={shelfDuel} data-tip="Записать пару выученных мозгов на полку «Ринга чемпионов»: дальше они стреляют друг в друга и против других дуэтов, веса переживают перезапуск.">
-                На полку ринга
-              </button>
-            </div>
-          )}
-          <p className="lab-hint" style={{ margin: 0 }}>
-            пока обе стороны учатся друг против друга, прогресса не у кого занять — гонка и есть смысл игры
-          </p>
-          {queenMsg && <p className="lab-hint" style={{ margin: 0 }}>{queenMsg}</p>}
-        </section>
-
-        <section className="ws-card">
-          <h3>Самообучение на сервере</h3>
-          <p className="lab-hint" style={{ margin: 0 }}>
-            та же гонка поколений, но считаем её не вкладкой, а стендом: цикл уходит в фоновый поток,
-            страницу можно закрыть и вернуться к готовности — чемпионы сами сядут за штурвалы и встанут на ринг.
-          </p>
-          <div className="fields fields--2" style={{ padding: 0 }}>
-            <label data-tip="Поколений за один запуск. Ориентир: ~2 с на поколение при pop=4 на встречном курсе.">
-              поколений
-              <input type="number" min={1} max={60} value={srvGens} onChange={(e) => setSrvGens(Math.max(1, Math.min(60, Number(e.target.value) || 1)))} />
-            </label>
-            <label data-tip="Первые места стартовой популяции достаются выученным мозгам с полки ринга — сильнейшим по последнему сводному бою (а пока боя не было — самым свежим дуэтам). Остальное — обычный случайный старт. Сила копится от кампании к кампании; выключено — каждая война начинается с врождённого рефлекса.">
-              наследие полки
-              <input type="checkbox" checked={srvHeirs} disabled={ringDuels.length === 0} onChange={(e) => setSrvHeirs(e.target.checked)} />
-            </label>
-            <label data-tip="Сезон без ручных кликов: досчитанная кампания тут же сводит круговой бой — новый чемпион против сильнейших по форме полки (не больше четырёх дуэтов). Форма и её движение обновляются сами, и следующая война стартует уже от свежих рангов. По «Стоп» свод не играется: прерванная кампания — не итог сезона.">
-              свести ринг после войны
-              <input type="checkbox" checked={srvRing} disabled={ringDuels.length === 0} onChange={(e) => setSrvRing(e.target.checked)} />
-            </label>
-          </div>
-          {srvHeirs && ringDuels.length > 0 && (
-            <p className="lab-hint" style={{ margin: 0 }}>
-              {heirByRank ? 'война начнётся с сильнейших по форме полки: ' : 'сводного боя ещё не было, война начнётся с самых свежих дуэтов: '}
-              {heirNames}
-            </p>
-          )}
-          {srvHeirs && ringDuels.length === 0 && (
-            <p className="lab-hint" style={{ margin: 0 }}>полка пуста: наследовать нечего, старт пойдёт с врождённого рефлекса</p>
-          )}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" className="primary" data-tip="Отдать королеве стенд: поколения досчитываются в фоновом потоке сервера, прогресс опрашивается раз в 2 с." onClick={() => void srvStart()}>
-              {srv?.running ? 'воюет в фоне…' : 'Воевать в фоне'}
-            </button>
-            {srv?.running && (
-              <button type="button" data-tip="Текущее поколение досчитается, после чего гонка свернётся; в мозг и на ринг уйдёт то, что уже выучено." onClick={() => void srvStop()}>
-                Стоп
-              </button>
-            )}
-          </div>
-          {srv && (srv.generations_done > 0 || srv.running) && (
-            <>
-              <p className="lab-hint" style={{ margin: 0 }}>
-                {srv.generations_done} / {srv.generations} поколений · {fmt(srv.seconds, 0)} с · seed {srv.seed}
-                {srv.inherit?.length ? ` · наследие дуэтов ${srv.inherit.join(', ')}` : ''}
-                {srv.auto_ring && srv.running && srv.generations_done >= srv.generations ? ' · сводим ринг…' : ''}
-                {srv.stop_requested ? ' · запрошена остановка' : ''}
-              </p>
-              <div className="table-card">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>поколение</th>
-                      <th>взятия в бою</th>
-                      <th>экзамен</th>
-                      <th>приспособленность ракеты</th>
-                      <th>приспособленность цели</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {srv.log.map((r) => (
-                      <tr key={r.gen}>
-                        <td>{r.gen + 1}</td>
-                        <td>{Math.round(r.p_hit_ring * 100)}%</td>
-                        <td>{Math.round(r.exam_p_hit * 100)}%</td>
-                        <td className={r.missile_best >= 1000 ? 'is-bad' : ''}>{fmt(r.missile_best, 1)}</td>
-                        <td>{fmt(r.evader_best, 1)}</td>
-                      </tr>
+        {layer === 'school' && (
+          <>
+            <section className="ws-card">
+              <h3>Две мухи учатся</h3>
+              <div className="fields fields--2" style={{ padding: 0 }}>
+                <label data-tip="Один цикл поколений на выбор: учится только цель, учатся обе стороны на вкладке, или ту же гонку считает стенд в фоне.">
+                  кто учится
+                  <select value={learnMode} onChange={(e) => setLearnMode(e.target.value as LearnMode)}>
+                    {LEARN_MODES.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
                     ))}
-                  </tbody>
-                </table>
+                  </select>
+                </label>
+                <label data-tip={LEARN_MODES.find((m) => m.id === learnMode)?.tip ?? ''}>
+                  поколений
+                  <input type="number" min={1} max={LEARN_MODES.find((m) => m.id === learnMode)?.max ?? 40} value={gens} onChange={(e) => setGens(Number(e.target.value))} />
+                </label>
               </div>
-              {srv.saved.ring && !srv.running && (
-                <p className="lab-hint" style={{ margin: 0 }}>
-                  на полке ринга: «{srv.saved.ring.label}» · weights {srv.saved.weights ? 'записаны' : 'не тронуты'}
-                </p>
-              )}
-              {srv.saved.ring_battle && !srv.running && (
-                <p className="lab-hint" style={{ margin: 0 }}>
-                  сезон сведён: {srv.saved.ring_battle.duels.length} дуэта, сильнее всех
-                  {srv.saved.ring_battle.standings[0]
-                    ? ` «${srv.saved.ring_battle.standings[0].label}» (${srv.saved.ring_battle.standings[0].score} ${srv.saved.ring_battle.standings[0].score % 10 === 1 && srv.saved.ring_battle.standings[0].score % 100 !== 11 ? 'очко' : srv.saved.ring_battle.standings[0].score % 10 >= 2 && srv.saved.ring_battle.standings[0].score % 10 <= 4 && !(srv.saved.ring_battle.standings[0].score % 100 >= 11 && srv.saved.ring_battle.standings[0].score % 100 <= 14) ? 'очка' : 'очков'})`
-                    : ''} — форма полки и её движение обновлены
-                </p>
-              )}
-            </>
-          )}
-          {srvMsg && <p className="lab-hint" style={{ margin: 0 }}>{srvMsg}</p>}
-        </section>
-
-        <section className="ws-card">
-          <h3>Хроника войн</h3>
-          <p className="lab-hint" style={{ margin: 0 }}>
-            лог поколений живёт в задаче стенда; хроника хранит уже доигранные кампании — их кривые взятий и
-            финал (что ушло в живые веса и на ринг). Память о самообучении переживает перезапуск, потому что
-            лежит в <code>data/queen_chronicle.json</code> под тем же volume, что и веса.
-          </p>
-          {chron.length === 0 && (
-            <p className="lab-hint" style={{ margin: 0 }}>
-              хронику ещё никто не вёл: выпустите королеву воевать в фоне — доигранная кампания запишется сама
-            </p>
-          )}
-          {chron.length > 0 && (
-            <div className="table-card">
-              <table>
-                <thead>
-                  <tr>
-                    <th>кампания</th>
-                    <th>поколения</th>
-                    <th>кривая взятий</th>
-                    <th>итог</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {chron
-                    .slice()
-                    .reverse()
-                    .map((c) => (
-                      <tr key={c.id}>
-                        <td data-tip={`курс ${c.scenario?.aspect ?? '—'} · популяция ${c.pop} · seed ${c.seed} · ${fmt(c.seconds, 0)} с`}>
-                          {c.label}
-                          {c.error ? ' · ⚠' : ''}
-                        </td>
-                        <td>
-                          {c.generations}
-                          {c.generations !== c.planned ? ` / ${c.planned}` : ''}
-                          {c.stopped ? ' · стоп' : ''}
-                        </td>
-                        <td data-tip="Доля взятий ракеты в бою по поколениям: ▁ — провал, █ — берёт всех. Растёт — значит гонка вооружений действительно идёт.">
-                          <span className="chip">{spark(c.curve.map((r) => r.p_hit_ring))}</span>
-                        </td>
-                        <td>
-                          {Math.round((c.p_hit_first ?? 0) * 100)}% → {Math.round((c.p_hit_last ?? 0) * 100)}%
-                          <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
-                            {c.applied && <span className="chip is-ok" data-tip="Чемпионы кампании сели за штурвалы живых мозгов.">в веса</span>}
-                            {c.shelved && <span className="chip" data-tip="Дуэт кампании встал на полку ринга чемпионов.">на ринге</span>}
-                            {!!c.inherited?.length && (
-                              <span className="chip" data-tip={`Кампания началась не с врождённого рефлекса: стартовые места достались дуэтам полки ${c.inherited.join(', ')}.`}>
-                                с полки
-                              </span>
-                            )}
-                            <button type="button" onClick={() => void dropChron(c.id)} data-tip="Вычеркнуть запись из хроники.">
-                              ✕
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        <section className="ws-card">
-          <h3>Ринг чемпионов: дуэты против дуэтов</h3>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button type="button" className="primary" disabled={ringBusy || busy} onClick={fightRing} data-tip="Каждый дуэт стреляет по каждому и держит оборону своим выученным уклонистом: три фиксированные геометрии на пару. Ранг = взятия в атаке + отражения в защите.">
-              {ringBusy ? 'сводятся…' : 'Свести на ринге'}
-            </button>
-            {ringDuels.map((d) => (
-              <button key={d.id} type="button" onClick={() => void dropDuel(d.id)} data-tip="Снять дуэт с полки.">
-                ✕ {d.label}
-              </button>
-            ))}
-          </div>
-          {ringDuels.length === 0 && (
-            <p className="lab-hint" style={{ margin: 0 }}>
-              полка пуста: вырастите чемпионов у Красной королевы и поставьте пару на ринг кнопкой «На полку ринга»
-            </p>
-          )}
-          {ringDuels.length > 0 && (
-            <>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
-                <label data-tip="Чья ракета стреляет: берём ракетную сторону дуэта с полки.">
-                  ракета
-                  <select value={attId} onChange={(e) => setPairAtt(Number(e.target.value))}>
-                    {ringDuels.map((d) => (
-                      <option key={d.id} value={d.id}>{d.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label data-tip="Чей уклонист уходит: берём цель другого дуэта — так на ринге можно сводить стороны в любой комбинации.">
-                  цель
-                  <select value={defId} onChange={(e) => setPairDef(Number(e.target.value))}>
-                    {ringDuels.map((d) => (
-                      <option key={d.id} value={d.id}>{d.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <button type="button" className="primary" disabled={pairBusy || busy} onClick={() => void duelPair()} data-tip="Посадить сборную пару в живые веса и сразу выпустить её в сцену: одним кликом, без «Пуска».">
-                  {pairBusy ? 'сажаем…' : 'Свести вживую'}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="primary" data-tip="Прогнать цикл: каждое поколение сразу играется на сцене, если идёт показ боя." disabled={learnMode !== 'server' && (learning || busy)} onClick={startLearning}>
+                  {startLabel}
                 </button>
+                {learning && (
+                  <button type="button" data-tip="Цикл сворачивается после текущего поколения; выученное остаётся." onClick={stopLearning}>
+                    Стоп
+                  </button>
+                )}
               </div>
-              {lastDuel && (
-                <p className="lab-hint" style={{ margin: 0 }} data-tip="Прогноз взят из памяти последнего сводного боя — та же пара, те же три геометрии; «всухую» — 100% или 0% взятий.">
-                  {duelPrediction(lastDuel)}
+              <div className="duel-geo">
+                <span className="chip" data-tip="Геометрия боя, на которой учится поколение: она же задаёт, есть ли у цели смысл маневрировать.">
+                  {ASPECT_LABEL[sc.aspect]} · смещение {fmt(sc.off_axis_m, 0)} м · дальность {fmt(sc.range_m, 0)} м
+                </span>
+                {GEO_PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`chip ${sc.aspect === p.id ? 'is-active' : ''}`}
+                    data-tip={p.tip}
+                    onClick={() => {
+                      set('aspect', p.id)
+                      set('off_axis_m', p.off)
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+                <label className="chip duel-geo__num" data-tip="Располагаемая перегрузка цели, g: больше — круче разворот, 0 — уклоняться нечем.">
+                  перегрузка цели, g
+                  <input type="number" min={0} max={30} step={0.5} value={sc.n_target} onChange={(e) => set('n_target', Math.max(0, Number(e.target.value) || 0))} />
+                </label>
+              </div>
+              {(!sc.duel || sc.n_target <= 0) && (
+                <p className="lab-hint" style={{ margin: 0 }}>
+                  <span className="chip is-warn">{!sc.duel ? 'дуэль выключена: цель идёт по прямой и не поворачивает вовсе' : 'перегрузка цели 0 g → уклонист неманёвренный по определению'}</span>
                 </p>
               )}
-              {pairMsg && <p className="lab-hint" style={{ margin: 0 }}>{pairMsg}</p>}
-            </>
-          )}
-          {ringStand && (
-            <div className="table-card">
-              <table>
-                <thead>
-                  <tr>
-                    <th>ранг</th>
-                    <th>дуэт</th>
-                    <th>атака</th>
-                    <th>оборона</th>
-                    <th>очки</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ringStand.map((s) => (
-                    <tr key={s.id}>
-                      <td>{s.rank}</td>
-                      <td data-tip="Движение относительно прежней формы: ▲ поднялся, ▼ сел, ±0 удержал, без знака — новичок или первый свод.">{s.label}{ringMoveTag(s.id)}</td>
-                      <td data-tip="Сколько целей взял этот дуэт, атакуя чужие мозги (из всех пар и геометрий).">
-                        {s.attack_hits}/{s.attack_n} · {Math.round(s.p_attack * 100)}%
-                      </td>
-                      <td data-tip="Сколько чужих ракет пережил его уклонист.">
-                        {s.defense_saves}/{s.defense_n} · {Math.round(s.p_defense * 100)}%
-                      </td>
-                      <td className={s.rank === 1 ? 'map-win' : undefined}>{s.score}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {ringCells && (
-            <div className="table-card">
-              <table>
-                <thead>
-                  <tr>
-                    <th>атака → оборона</th>
-                    <th>взятия</th>
-                    <th>жизнь цели, с</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(() => {
-                    const name = new Map(ringDuels.map((d) => [d.id, d.label]))
-                    return ringCells.map((c) => (
-                      <tr key={`${c.attacker}-${c.defender}`}>
-                        <td>
-                          {name.get(c.attacker) ?? c.attacker} → {name.get(c.defender) ?? c.defender}
-                        </td>
-                        <td className={c.p_hit >= 0.5 ? 'map-win' : undefined}>{Math.round(c.p_hit * 100)}%</td>
-                        <td>{fmt(c.t_survived_median, 1)}</td>
-                      </tr>
-                    ))
-                  })()}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {!ringCells && formCells.length > 0 && (
-            <div className="table-card">
-              <table>
-                <thead>
-                  <tr>
-                    <th>атака ↓ / оборона →</th>
-                    {formIds.map((d) => (
-                      <th key={d}>{ringName(d)}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {formIds.map((a) => (
-                    <tr key={a}>
-                      <td>{ringName(a)}</td>
-                      {formIds.map((d) => {
-                        const p = a === d ? null : formP.get(`${a}|${d}`) ?? null
-                        return (
-                          <td
-                            key={d}
-                            data-tip={
-                              p === null
-                                ? 'Такой пары круг не сводил.'
-                                : `Доля взятий этой парой по всем геометриям последнего свода. Клик — свести её вживую прямо сейчас: стороны сядут на штурвалы и бой полетит на текущей геометрии стенда.`
-                            }
-                            className={p !== null && p >= 0.5 ? 'map-win' : undefined}
-                            style={p !== null ? { cursor: 'pointer' } : undefined}
-                            onClick={
-                              p !== null
-                                ? () => {
-                                    setPairAtt(a)
-                                    setPairDef(d)
-                                    void duelPair(a, d)
-                                  }
-                                : undefined
-                            }
-                          >
-                            {p === null ? '—' : `${Math.round(p * 100)}%`}
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {reigns.length > 1 && (
-            <p className="lab-hint" style={{ margin: 0 }} data-tip="Лента правлений: каждый сводный бой оставляет чем он кончился; галочкой — нынешний лидер формы. Старшие своды за горизонт памяти (24) не показываются.">
-              {seasons.length > reigns.length ? '… ' : ''}правления: {reigns.map((s, i) => (
-                <span key={i}>
-                  {i > 0 ? ' → ' : ''}
-                  {s.champ_label || `дуэт ${s.champ_id}`}
-                  {i === reigns.length - 1 ? ' ✓' : ''}
-                </span>
-              ))}
-            </p>
-          )}
-          {seasons.length > 1 && medalTop.length > 1 && (
-            <p className="lab-hint" style={{ margin: 0 }} data-tip="Медальный зачёт: за каждый свод 1-е место — 3 очка, 2-е — 2, 3-е — 1; в скобках — чемпионские титулы. Считается по всей памяти ленты правлений, показаны первые пять.">
-              медальный зачёт: {medalTop.map((m, i) => (
-                <span key={m.id}>
-                  {i > 0 ? ' · ' : ''}
-                  {m.name} — {m.pts}
-                  {m.gold > 0 ? ` (${m.gold} ${medalGold(m.gold)})` : ''}
-                </span>
-              ))}
-            </p>
-          )}
-          <p className="lab-hint" style={{ margin: 0 }}>
-            полка в data/queen_ring.json: чемпионы разных поколений переживают перезапуск и сводятся между собой
-            {heirByRank && ringForm && ringForm.rows.length > 0
-              ? ` · форма запомнена: сильнее всех ${ringForm.rows[0].label || `дуэт ${ringForm.rows[0].id}`}${movePhrase(ringForm.rows[0])}, от него и растёт следующая кампания`
-              : ''}
-            {formCells.length > 0 ? ' · матрица «кто кого бьёт» — память последнего круга, подсветка — больше половины взятий; клик по числу — свести эту пару вживую' : ''}
-          </p>
-        </section>
+              {learnMode === 'server' && (
+                <label className="duel-geo__opt" data-tip="Цифры поколений приходят в любом случае. С показом стенд досчитывает один бой последнего поколения и играет его на сцене — вручную («Учить», «Воевать») учёба показывается всегда.">
+                  показывать бои поколений
+                  <input type="checkbox" checked={showLessons} onChange={(e) => setShowLessons(e.target.checked)} />
+                </label>
+              )}
+              {lesson && (
+                <p className="lab-hint" style={{ margin: 0 }} data-tip="Промежуток вдали цель не крутит по устройству: её признаки масштабируются близостью (θ·4, ρ·0.4), поэтому реакция появляется только рядом с ракетой. «Нырок + поворот в конце» — законный оптимум фитнеса «выжить», а не поломка.">
+                  {lesson.label}: {lesson.hit ? 'цель сбита' : `цель ушла · наименьшее сближение ${fmt(lesson.cpa_m, 0)} м`} ·{' '}
+                  {lesson.turn ? `манёвр начался: t = ${fmt(lesson.turn.t_s, 1)} с, до цели ${fmt(lesson.turn.range_m, 0)} м` : lesson.n_target_g > 0 ? 'за весь бой цель не повернула' : 'повернуть было нечем: перегрузка цели 0 g'}
+                </p>
+              )}
+            </section>
 
-        <section className="ws-card">
-          <h3>Оружие и классы мух</h3>
-          <div className="fields fields--2" style={{ padding: 0 }}>
-            <label data-tip="Боевая жизнь ракеты, с: окно, за которое она обязана сбить. В «Ринге» тоже ограничивает бой.">
-              боевая жизнь, с
-              <input type="number" min={5} max={sc.t_max} value={sc.fuse_life_s} onChange={(e) => set('fuse_life_s', Math.max(5, Number(e.target.value) || 5))} />
-            </label>
-            <label data-tip="Доступная перегрузка цели (уклониста), g. 0 — уклонисту нечем уходить.">
-              перегрузка цели
-              <input type="number" min={0} max={30} step={0.5} value={sc.n_target} onChange={(e) => set('n_target', Math.max(0, Number(e.target.value) || 0))} />
-            </label>
-            <label data-tip="Скорость ракеты-мухи, м/с.">
-              v ракеты
-              <input type="number" min={50} max={2000} step={10} value={sc.v_m} onChange={(e) => set('v_m', Math.max(50, Number(e.target.value) || 50))} />
-            </label>
-            <label data-tip="Скорость цели-самолёта, м/с.">
-              v цели
-              <input type="number" min={50} max={1000} step={10} value={sc.v_t} onChange={(e) => set('v_t', Math.max(50, Number(e.target.value) || 50))} />
-            </label>
-            <label data-tip="Предельная перегрузка ракеты, g.">
-              перегрузка ракеты
-              <input type="number" min={1} max={60} step={0.5} value={sc.n_max} onChange={(e) => set('n_max', Math.max(1, Number(e.target.value) || 1))} />
-            </label>
-            <label data-tip="Стартовая дальность, м.">
-              дальность
-              <input type="number" min={500} max={20000} step={100} value={sc.range_m} onChange={(e) => set('range_m', Math.max(500, Number(e.target.value) || 500))} />
-            </label>
-          </div>
-          <p className="lab-hint" style={{ margin: 0 }}>
-            честный бой одного класса: скорости сопоставимы (320/260 м/с), перегрузки 10 против 8 — тяжёлая ракета берёт всех закономерно
-          </p>
-        </section>
+            {learnMode === 'evader' && (
+              <section className="ws-card">
+                <h3>Школа уклониста</h3>
+                {schoolLog.length > 0 && (
+                  <div className="table-card">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>поколение</th>
+                          <th>приспособленность лучшего</th>
+                          <th>выживаемость</th>
+                          <th>жизнь чемпиона, с</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {schoolLog.map((r) => (
+                          <tr key={r.gen}>
+                            <td>{r.gen + 1}</td>
+                            <td className={r.best < 500 ? 'map-win' : undefined} data-tip="Меньше — лучше: отрицательный приспособленность = выжила и сожгла ракету; 1000+ = сбита.">
+                              {fmt(r.best, 1)}
+                            </td>
+                            <td>{Math.round(r.survive * 100)}%</td>
+                            <td>{fmt(r.t, 1)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {champ && (
+                  <div className="stat-grid">
+                    <span data-tip="Веса DN чемпиона (первая строка — тангаж, вторая — рыскание) и усиление контура.">
+                      чемпион · усиление <b>{fmt(champ.gain, 2)}</b>
+                    </span>
+                    <button type="button" onClick={applyChamp} data-tip="Сохранить веса чемпиона в data/weights_evader.npz и посадить его за штурвал цели (evader_law=brain).">
+                      Применить чемпиона
+                    </button>
+                  </div>
+                )}
+                {frame?.evader && (
+                  <div className="stat-grid">
+                    <span data-tip="Выход контура цели-уклониста: команды тангаж/рыскание (−1…1), ограниченные доступной перегрузкой n_target·g.">
+                      DN цели <b>{fmt(frame.evader.dn.pitch, 2)} / {fmt(frame.evader.dn.yaw, 2)}</b>
+                    </span>
+                    <span data-tip="Держит ли сетчатка цели ракету в поле (после задержки сенсора).">
+                      {frame.evader.lock ? 'видит ракету' : 'не видит ракету'} · {frame.evader.weights}
+                    </span>
+                  </div>
+                )}
+                <p className="lab-hint" style={{ margin: 0 }}>
+                  геометрия поколения каждый раз новая, приспособленность — выжить, накрутить ракете перегрузки и дальность;
+                  врождённый рефлекс — разворот к пеленгу (бабочка на огонь): эволюция учит цель разворачиваться ОТ ракеты
+                </p>
+                {schoolMsg && <p className="lab-hint" style={{ margin: 0 }}>{schoolMsg}</p>}
+              </section>
+            )}
 
-        <section className="ws-card">
-          <h3>Ринг: закон против закона</h3>
-          <div className="fields fields--2" style={{ padding: 0 }}>
-            <label data-tip="Сколько прогонов на ячейку (при шуме сенсора — разные реализации; сводка по медиане и доле перехватов).">
-              повторов на бой
-              <input type="number" min={1} max={15} value={duelRepeats} onChange={(e) => onDuelRepeats(Math.max(1, Math.min(15, Number(e.target.value) || 1)))} />
-            </label>
-          </div>
-          <button type="button" className="primary" data-tip="Посчитать все бои выбранных сторон на текущих условиях. Только на стенде." disabled={duelBusy || busy} onClick={onRunMatrix}>
-            {duelBusy ? 'ринг считает…' : 'Считать ринг'}
-          </button>
-          <div className="table-card">
-            <table>
-              <thead>
-                <tr>
-                  <th>ракета \\ цель</th>
-                  {(duelMatrix?.evaders ?? []).map((e) => (
-                    <th key={e} data-tip={evLabel(e)}>
-                      {e === 'straight' ? 'нема.' : e}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(duelMatrix?.missiles ?? []).map((m) => (
-                  <tr key={m}>
-                    <td data-tip={mslLabel(m)}>
-                      <small>{m}</small>
-                    </td>
-                    {(duelMatrix?.evaders ?? []).map((e) => {
-                      const c = cellOf(m, e)
-                      return (
-                        <td key={e} className={c ? (c.win === 'missile' ? 'map-win' : '') : ''} data-tip={c ? `${evLabel(e)} · R_min ${fmt(c.cpa_m, 0)} м · усилие ${fmt(c.n_int, 0)} g·с · пик ${fmt(c.n_peak, 1)} g${c.hit_rate > 0 && c.hit_rate < 1 ? ` · перехватов ${Math.round(c.hit_rate * 100)}%` : ''}` : undefined}>
-                          {c ? `${c.win === 'missile' ? '✕' : '·'} ${fmt(c.t_survived, 1)} с` : '—'}
-                        </td>
-                      )
-                    })}
-                  </tr>
+            {learnMode === 'queen' && (
+              <section className="ws-card">
+                <h3>Красная королева: мозг против мозга</h3>
+                {queenLog.length > 0 && (
+                  <div className="table-card">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>поколение</th>
+                          <th>взятия в бою</th>
+                          <th>экзамен</th>
+                          <th>приспособленность ракеты</th>
+                          <th>приспособленность цели</th>
+                          <th>жизнь цели, с</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {queenLog.map((r) => (
+                          <tr key={r.gen}>
+                            <td>{r.gen + 1}</td>
+                            <td>{Math.round(r.ring * 100)}%</td>
+                            <td data-tip="Чемпион против чемпиона на трёх фиксированных геометриях.">
+                              {Math.round(r.exam * 100)}%
+                            </td>
+                            <td className={r.m < 500 ? 'map-win' : undefined} data-tip="Меньше — лучше: <500 = взял (время перехвата + усилие); 1000+ = промах.">
+                              {fmt(r.m, 1)}
+                            </td>
+                            <td className={r.e < 500 ? 'map-win' : undefined} data-tip="Меньше — лучше: отрицательный = выжила и сожгла ракету; 1000+ = сбита.">
+                              {fmt(r.e, 1)}
+                            </td>
+                            <td>{fmt(r.t, 1)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {queenChamps && champBlock}
+                <p className="lab-hint" style={{ margin: 0 }}>
+                  пока обе стороны учатся друг против друга, прогресса не у кого занять — гонка и есть смысл игры
+                </p>
+                {queenMsg && <p className="lab-hint" style={{ margin: 0 }}>{queenMsg}</p>}
+              </section>
+            )}
+
+            {learnMode === 'server' && (
+              <section className="ws-card">
+                <h3>Самообучение на сервере</h3>
+                <p className="lab-hint" style={{ margin: 0 }}>
+                  та же гонка поколений, но считаем её не вкладкой, а стендом: цикл уходит в фоновый поток,
+                  страницу можно закрыть и вернуться к готовности — чемпионы сами сядут за штурвалы и встанут на ринг.
+                </p>
+                <div className="fields fields--2" style={{ padding: 0 }}>
+                  <label data-tip="Первые места стартовой популяции достаются выученным мозгам с полки ринга — сильнейшим по последнему сводному бою (а пока боя не было — самым свежим дуэтам). Остальное — обычный случайный старт. Сила копится от кампании к кампании; выключено — каждая война начинается с врождённого рефлекса.">
+                    наследие полки
+                    <input type="checkbox" checked={srvHeirs} disabled={ringDuels.length === 0} onChange={(e) => setSrvHeirs(e.target.checked)} />
+                  </label>
+                  <label data-tip="Сезон без ручных кликов: досчитанная кампания тут же сводит круговой бой — новый чемпион против сильнейших по форме полки (не больше четырёх дуэтов). Форма и её движение обновляются сами, и следующая война стартует уже от свежих рангов. По «Стоп» свод не играется: прерванная кампания — не итог сезона.">
+                    свести ринг после войны
+                    <input type="checkbox" checked={srvRing} disabled={ringDuels.length === 0} onChange={(e) => setSrvRing(e.target.checked)} />
+                  </label>
+                </div>
+                {srvHeirs && ringDuels.length > 0 && (
+                  <p className="lab-hint" style={{ margin: 0 }}>
+                    {heirByRank ? 'война начнётся с сильнейших по форме полки: ' : 'сводного боя ещё не было, война начнётся с самых свежих дуэтов: '}
+                    {heirNames}
+                  </p>
+                )}
+                {srvHeirs && ringDuels.length === 0 && (
+                  <p className="lab-hint" style={{ margin: 0 }}>полка пуста: наследовать нечего, старт пойдёт с врождённого рефлекса</p>
+                )}
+                <p className="lab-hint" style={{ margin: 0 }}>
+                  запуск и «Стоп» — в карточке выше: поколения досчитываются в фоновом потоке сервера, прогресс
+                  опрашивается раз в 2 с; по остановке текущее поколение досчитается, и в живые веса уйдёт уже выученное
+                </p>
+                {srv && (srv.generations_done > 0 || srv.running) && (
+                  <>
+                    <p className="lab-hint" style={{ margin: 0 }}>
+                      {srv.generations_done} / {srv.generations} поколений · {fmt(srv.seconds, 0)} с · seed {srv.seed}
+                      {srv.inherit?.length ? ` · наследие дуэтов ${srv.inherit.join(', ')}` : ''}
+                      {srv.auto_ring && srv.running && srv.generations_done >= srv.generations ? ' · сводим ринг…' : ''}
+                      {srv.stop_requested ? ' · запрошена остановка' : ''}
+                    </p>
+                    <div className="table-card">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>поколение</th>
+                            <th>взятия в бою</th>
+                            <th>экзамен</th>
+                            <th>приспособленность ракеты</th>
+                            <th>приспособленность цели</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {srv.log.map((r) => (
+                            <tr key={r.gen}>
+                              <td>{r.gen + 1}</td>
+                              <td>{Math.round(r.p_hit_ring * 100)}%</td>
+                              <td>{Math.round(r.exam_p_hit * 100)}%</td>
+                              <td className={r.missile_best >= 1000 ? 'is-bad' : ''}>{fmt(r.missile_best, 1)}</td>
+                              <td>{fmt(r.evader_best, 1)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {srv.saved.ring && !srv.running && (
+                      <p className="lab-hint" style={{ margin: 0 }}>
+                        на полке ринга: «{srv.saved.ring.label}» · weights {srv.saved.weights ? 'записаны' : 'не тронуты'}
+                      </p>
+                    )}
+                    {srv.saved.ring_battle && !srv.running && (
+                      <p className="lab-hint" style={{ margin: 0 }}>
+                        сезон сведён: {srv.saved.ring_battle.duels.length} дуэта, сильнее всех
+                        {srv.saved.ring_battle.standings[0]
+                          ? ` «${srv.saved.ring_battle.standings[0].label}» (${srv.saved.ring_battle.standings[0].score} ${srv.saved.ring_battle.standings[0].score % 10 === 1 && srv.saved.ring_battle.standings[0].score % 100 !== 11 ? 'очко' : srv.saved.ring_battle.standings[0].score % 10 >= 2 && srv.saved.ring_battle.standings[0].score % 10 <= 4 && !(srv.saved.ring_battle.standings[0].score % 100 >= 11 && srv.saved.ring_battle.standings[0].score % 100 <= 14) ? 'очка' : 'очков'})`
+                          : ''} — форма полки и её движение обновлены
+                      </p>
+                    )}
+                    {queenChamps && champBlock}
+                  </>
+                )}
+                {srvMsg && <p className="lab-hint" style={{ margin: 0 }}>{srvMsg}</p>}
+              </section>
+            )}
+
+            {/* хроника — память о прошлых войнах, а не текущее действие:
+                второстепенное не убираем, но и не держим в первом экране */}
+            <details className="ws-fold">
+              <summary>Хроника войн</summary>
+              <section className="ws-card">
+                <p className="lab-hint" style={{ margin: 0 }}>
+                  лог поколений живёт в задаче стенда; хроника хранит уже доигранные кампании — их кривые взятий и
+                  финал (что ушло в живые веса и на ринг). Память о самообучении переживает перезапуск, потому что
+                  лежит в <code>data/queen_chronicle.json</code> под тем же volume, что и веса.
+                </p>
+                {chron.length === 0 && (
+                  <p className="lab-hint" style={{ margin: 0 }}>
+                    хронику ещё никто не вёл: выпустите королеву воевать в фоне — доигранная кампания запишется сама
+                  </p>
+                )}
+                {chron.length > 0 && (
+                  <div className="table-card">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>кампания</th>
+                          <th>поколения</th>
+                          <th>кривая взятий</th>
+                          <th>итог</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {chron
+                          .slice()
+                          .reverse()
+                          .map((c) => (
+                            <tr key={c.id}>
+                              <td data-tip={`курс ${c.scenario?.aspect ?? '—'} · популяция ${c.pop} · seed ${c.seed} · ${fmt(c.seconds, 0)} с`}>
+                                {c.label}
+                                {c.error ? ' · ⚠' : ''}
+                              </td>
+                              <td>
+                                {c.generations}
+                                {c.generations !== c.planned ? ` / ${c.planned}` : ''}
+                                {c.stopped ? ' · стоп' : ''}
+                              </td>
+                              <td data-tip="Доля взятий ракеты в бою по поколениям: ▁ — провал, █ — берёт всех. Растёт — значит гонка вооружений действительно идёт.">
+                                <span className="chip">{spark(c.curve.map((r) => r.p_hit_ring))}</span>
+                              </td>
+                              <td>
+                                {Math.round((c.p_hit_first ?? 0) * 100)}% → {Math.round((c.p_hit_last ?? 0) * 100)}%
+                                <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
+                                  {c.applied && <span className="chip is-ok" data-tip="Чемпионы кампании сели за штурвалы живых мозгов.">в веса</span>}
+                                  {c.shelved && <span className="chip" data-tip="Дуэт кампании встал на полку ринга чемпионов.">на ринге</span>}
+                                  {!!c.inherited?.length && (
+                                    <span className="chip" data-tip={`Кампания началась не с врождённого рефлекса: стартовые места достались дуэтам полки ${c.inherited.join(', ')}.`}>
+                                      с полки
+                                    </span>
+                                  )}
+                                  <button type="button" onClick={() => void dropChron(c.id)} data-tip="Вычеркнуть запись из хроники.">
+                                    ✕
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </details>
+          </>
+        )}
+
+        {layer === 'duels' && (
+          <>
+            <section className="ws-card">
+              <h3>Ринг чемпионов: дуэты против дуэтов</h3>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button type="button" className="primary" disabled={ringBusy || busy} onClick={fightRing} data-tip="Каждый дуэт стреляет по каждому и держит оборону своим выученным уклонистом: три фиксированные геометрии на пару. Ранг = взятия в атаке + отражения в защите.">
+                  {ringBusy ? 'сводятся…' : 'Свести на ринге'}
+                </button>
+                {ringDuels.map((d) => (
+                  <button key={d.id} type="button" onClick={() => void dropDuel(d.id)} data-tip="Снять дуэт с полки.">
+                    ✕ {d.label}
+                  </button>
                 ))}
-              </tbody>
-            </table>
-            {!duelMatrix && <p className="lab-hint" style={{ padding: '6px 12px' }}>матрица считается на стенде: строки — стороны ракеты, столбцы — законы уклонения; ✕ — взяла ракета, · — выстояла цель</p>}
-          </div>
-          {duelMatrix && (
-            <div className="stat-grid">
-              <span data-tip="Ячеек, где победа осталась за ракетой (при повторах — по доле перехватов ≥50%).">
-                ракета взяла <b>{wins} / {duelMatrix.cells.length}</b>
-              </span>
-              <span data-tip="Аспект и боевая жизнь, на которых считался ринг.">
-                условия <b>{duelMatrix.scenario.aspect} · {fmt(duelMatrix.scenario.fuse_life_s, 0)} с · ×{duelMatrix.repeats}</b>
-              </span>
-              <button type="button" onClick={onExportCsv}>CSV ринга</button>
-            </div>
-          )}
-        </section>
+              </div>
+              {ringDuels.length === 0 && (
+                <p className="lab-hint" style={{ margin: 0 }}>
+                  полка пуста: вырастите чемпионов у Красной королевы и поставьте пару на ринг кнопкой «На полку ринга»
+                </p>
+              )}
+              {ringDuels.length > 0 && (
+                <>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+                    <label data-tip="Чья ракета стреляет: берём ракетную сторону дуэта с полки.">
+                      ракета
+                      <select value={attId} onChange={(e) => setPairAtt(Number(e.target.value))}>
+                        {ringDuels.map((d) => (
+                          <option key={d.id} value={d.id}>{d.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label data-tip="Чей уклонист уходит: берём цель другого дуэта — так на ринге можно сводить стороны в любой комбинации.">
+                      цель
+                      <select value={defId} onChange={(e) => setPairDef(Number(e.target.value))}>
+                        {ringDuels.map((d) => (
+                          <option key={d.id} value={d.id}>{d.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button type="button" className="primary" disabled={pairBusy || busy} onClick={() => void duelPair()} data-tip="Посадить сборную пару в живые веса и сразу выпустить её в сцену: одним кликом, без «Пуска».">
+                      {pairBusy ? 'сажаем…' : 'Свести вживую'}
+                    </button>
+                  </div>
+                  {lastDuel && (
+                    <p className="lab-hint" style={{ margin: 0 }} data-tip="Прогноз взят из памяти последнего сводного боя — та же пара, те же три геометрии; «всухую» — 100% или 0% взятий.">
+                      {duelPrediction(lastDuel)}
+                    </p>
+                  )}
+                  {pairMsg && <p className="lab-hint" style={{ margin: 0 }}>{pairMsg}</p>}
+                </>
+              )}
+              {ringStand && (
+                <div className="table-card">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>ранг</th>
+                        <th>дуэт</th>
+                        <th>атака</th>
+                        <th>оборона</th>
+                        <th>очки</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ringStand.map((s) => (
+                        <tr key={s.id}>
+                          <td>{s.rank}</td>
+                          <td data-tip="Движение относительно прежней формы: ▲ поднялся, ▼ сел, ±0 удержал, без знака — новичок или первый свод.">{s.label}{ringMoveTag(s.id)}</td>
+                          <td data-tip="Сколько целей взял этот дуэт, атакуя чужие мозги (из всех пар и геометрий).">
+                            {s.attack_hits}/{s.attack_n} · {Math.round(s.p_attack * 100)}%
+                          </td>
+                          <td data-tip="Сколько чужих ракет пережил его уклонист.">
+                            {s.defense_saves}/{s.defense_n} · {Math.round(s.p_defense * 100)}%
+                          </td>
+                          <td className={s.rank === 1 ? 'map-win' : undefined}>{s.score}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {ringCells && (
+                <div className="table-card">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>атака → оборона</th>
+                        <th>взятия</th>
+                        <th>жизнь цели, с</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        const name = new Map(ringDuels.map((d) => [d.id, d.label]))
+                        return ringCells.map((c) => (
+                          <tr key={`${c.attacker}-${c.defender}`}>
+                            <td>
+                              {name.get(c.attacker) ?? c.attacker} → {name.get(c.defender) ?? c.defender}
+                            </td>
+                            <td className={c.p_hit >= 0.5 ? 'map-win' : undefined}>{Math.round(c.p_hit * 100)}%</td>
+                            <td>{fmt(c.t_survived_median, 1)}</td>
+                          </tr>
+                        ))
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!ringCells && formCells.length > 0 && (
+                <div className="table-card">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>атака ↓ / оборона →</th>
+                        {formIds.map((d) => (
+                          <th key={d}>{ringName(d)}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {formIds.map((a) => (
+                        <tr key={a}>
+                          <td>{ringName(a)}</td>
+                          {formIds.map((d) => {
+                            const p = a === d ? null : formP.get(`${a}|${d}`) ?? null
+                            return (
+                              <td
+                                key={d}
+                                data-tip={
+                                  p === null
+                                    ? 'Такой пары круг не сводил.'
+                                    : `Доля взятий этой парой по всем геометриям последнего свода. Клик — свести её вживую прямо сейчас: стороны сядут на штурвалы и бой полетит на текущей геометрии стенда.`
+                                }
+                                className={p !== null && p >= 0.5 ? 'map-win' : undefined}
+                                style={p !== null ? { cursor: 'pointer' } : undefined}
+                                onClick={
+                                  p !== null
+                                    ? () => {
+                                        setPairAtt(a)
+                                        setPairDef(d)
+                                        void duelPair(a, d)
+                                      }
+                                    : undefined
+                                }
+                              >
+                                {p === null ? '—' : `${Math.round(p * 100)}%`}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {reigns.length > 1 && (
+                <p className="lab-hint" style={{ margin: 0 }} data-tip="Лента правлений: каждый сводный бой оставляет чем он кончился; галочкой — нынешний лидер формы. Старшие своды за горизонт памяти (24) не показываются.">
+                  {seasons.length > reigns.length ? '… ' : ''}правления: {reigns.map((s, i) => (
+                    <span key={i}>
+                      {i > 0 ? ' → ' : ''}
+                      {s.champ_label || `дуэт ${s.champ_id}`}
+                      {i === reigns.length - 1 ? ' ✓' : ''}
+                    </span>
+                  ))}
+                </p>
+              )}
+              {seasons.length > 1 && medalTop.length > 1 && (
+                <p className="lab-hint" style={{ margin: 0 }} data-tip="Медальный зачёт: за каждый свод 1-е место — 3 очка, 2-е — 2, 3-е — 1; в скобках — чемпионские титулы. Считается по всей памяти ленты правлений, показаны первые пять.">
+                  медальный зачёт: {medalTop.map((m, i) => (
+                    <span key={m.id}>
+                      {i > 0 ? ' · ' : ''}
+                      {m.name} — {m.pts}
+                      {m.gold > 0 ? ` (${m.gold} ${medalGold(m.gold)})` : ''}
+                    </span>
+                  ))}
+                </p>
+              )}
+              <p className="lab-hint" style={{ margin: 0 }}>
+                полка в data/queen_ring.json: чемпионы разных поколений переживают перезапуск и сводятся между собой
+                {heirByRank && ringForm && ringForm.rows.length > 0
+                  ? ` · форма запомнена: сильнее всех ${ringForm.rows[0].label || `дуэт ${ringForm.rows[0].id}`}${movePhrase(ringForm.rows[0])}, от него и растёт следующая кампания`
+                  : ''}
+                {formCells.length > 0 ? ' · матрица «кто кого бьёт» — память последнего круга, подсветка — больше половины взятий; клик по числу — свести эту пару вживую' : ''}
+              </p>
+            </section>
+
+            {/* справочник и «взрослый» ринг законов — под рукой, но не в первом экране */}
+            <details className="ws-fold">
+              <summary>Оружие и классы мух</summary>
+              <section className="ws-card">
+                <div className="fields fields--2" style={{ padding: 0 }}>
+                  <label data-tip="Боевая жизнь ракеты, с: окно, за которое она обязана сбить. В «Ринге» тоже ограничивает бой.">
+                    боевая жизнь, с
+                    <input type="number" min={5} max={sc.t_max} value={sc.fuse_life_s} onChange={(e) => set('fuse_life_s', Math.max(5, Number(e.target.value) || 5))} />
+                  </label>
+                  <label data-tip="Доступная перегрузка цели (уклониста), g. 0 — уклонисту нечем уходить.">
+                    перегрузка цели
+                    <input type="number" min={0} max={30} step={0.5} value={sc.n_target} onChange={(e) => set('n_target', Math.max(0, Number(e.target.value) || 0))} />
+                  </label>
+                  <label data-tip="Скорость ракеты-мухи, м/с.">
+                    v ракеты
+                    <input type="number" min={50} max={2000} step={10} value={sc.v_m} onChange={(e) => set('v_m', Math.max(50, Number(e.target.value) || 50))} />
+                  </label>
+                  <label data-tip="Скорость цели-самолёта, м/с.">
+                    v цели
+                    <input type="number" min={50} max={1000} step={10} value={sc.v_t} onChange={(e) => set('v_t', Math.max(50, Number(e.target.value) || 50))} />
+                  </label>
+                  <label data-tip="Предельная перегрузка ракеты, g.">
+                    перегрузка ракеты
+                    <input type="number" min={1} max={60} step={0.5} value={sc.n_max} onChange={(e) => set('n_max', Math.max(1, Number(e.target.value) || 1))} />
+                  </label>
+                  <label data-tip="Стартовая дальность, м.">
+                    дальность
+                    <input type="number" min={500} max={20000} step={100} value={sc.range_m} onChange={(e) => set('range_m', Math.max(500, Number(e.target.value) || 500))} />
+                  </label>
+                </div>
+                <p className="lab-hint" style={{ margin: 0 }}>
+                  честный бой одного класса: скорости сопоставимы (320/260 м/с), перегрузки 10 против 8 — тяжёлая ракета берёт всех закономерно
+                </p>
+              </section>
+            </details>
+
+            <details className="ws-fold">
+              <summary>Ринг: закон против закона</summary>
+              <section className="ws-card">
+                <div className="fields fields--2" style={{ padding: 0 }}>
+                  <label data-tip="Сколько прогонов на ячейку (при шуме сенсора — разные реализации; сводка по медиане и доле перехватов).">
+                    повторов на бой
+                    <input type="number" min={1} max={15} value={duelRepeats} onChange={(e) => onDuelRepeats(Math.max(1, Math.min(15, Number(e.target.value) || 1)))} />
+                  </label>
+                </div>
+                <button type="button" className="primary" data-tip="Посчитать все бои выбранных сторон на текущих условиях. Только на стенде." disabled={duelBusy || busy} onClick={onRunMatrix}>
+                  {duelBusy ? 'ринг считает…' : 'Считать ринг'}
+                </button>
+                <div className="table-card">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>ракета \\ цель</th>
+                        {(duelMatrix?.evaders ?? []).map((e) => (
+                          <th key={e} data-tip={evLabel(e)}>
+                            {e === 'straight' ? 'нема.' : e}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(duelMatrix?.missiles ?? []).map((m) => (
+                        <tr key={m}>
+                          <td data-tip={mslLabel(m)}>
+                            <small>{m}</small>
+                          </td>
+                          {(duelMatrix?.evaders ?? []).map((e) => {
+                            const c = cellOf(m, e)
+                            return (
+                              <td key={e} className={c ? (c.win === 'missile' ? 'map-win' : '') : ''} data-tip={c ? `${evLabel(e)} · R_min ${fmt(c.cpa_m, 0)} м · усилие ${fmt(c.n_int, 0)} g·с · пик ${fmt(c.n_peak, 1)} g${c.hit_rate > 0 && c.hit_rate < 1 ? ` · перехватов ${Math.round(c.hit_rate * 100)}%` : ''}` : undefined}>
+                                {c ? `${c.win === 'missile' ? '✕' : '·'} ${fmt(c.t_survived, 1)} с` : '—'}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {!duelMatrix && <p className="lab-hint" style={{ padding: '6px 12px' }}>матрица считается на стенде: строки — стороны ракеты, столбцы — законы уклонения; ✕ — взяла ракета, · — выстояла цель</p>}
+                </div>
+                {duelMatrix && (
+                  <div className="stat-grid">
+                    <span data-tip="Ячеек, где победа осталась за ракетой (при повторах — по доле перехватов ≥50%).">
+                      ракета взяла <b>{wins} / {duelMatrix.cells.length}</b>
+                    </span>
+                    <span data-tip="Аспект и боевая жизнь, на которых считался ринг.">
+                      условия <b>{duelMatrix.scenario.aspect} · {fmt(duelMatrix.scenario.fuse_life_s, 0)} с · ×{duelMatrix.repeats}</b>
+                    </span>
+                    <button type="button" onClick={onExportCsv}>CSV ринга</button>
+                  </div>
+                )}
+              </section>
+            </details>
+          </>
+        )}
       </div>
     </div>
   )

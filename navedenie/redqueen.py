@@ -25,11 +25,13 @@ from navedenie.circuit import FEAT_DIM, FlyCircuit
 from navedenie.engine import collect
 from navedenie.parallel import parallel_map
 from navedenie.evader_train import (
+    REPLAY_STRIDE,
     TRAIN_DT,
     TRAIN_STRIDE,
     _fitness,
     genome_circuit,
     init_evader_population,
+    replay_of,
 )
 from navedenie.sim import Scenario
 from navedenie.swarm import FlyGenome, evolve
@@ -87,6 +89,20 @@ def _median(xs: list[float]) -> float:
     return float(np.median(xs))
 
 
+def replay_queen(sc: Scenario, mg: FlyGenome, eg: FlyGenome, gen: int) -> dict:
+    """Показ боя чемпионов поколения на его же геометрии: те же стороны и тот же
+    набор флагов, что в `brain_battle`, только с кадрами."""
+    s = replace(sc, duel=True, mode="bio", brain="stub", evader_law="brain")
+    cap = min(s.t_max, float(s.fuse_life_s))
+    res = collect(s, stride=REPLAY_STRIDE, circuit=genome_circuit(s, mg), evader_circuit=genome_circuit(s, eg))
+    return replay_of(
+        res,
+        s,
+        f"королева · поколение {gen} · чемпионы",
+        {"missile_fitness": _missile_fitness(res, cap), "evader_fitness": _fitness(res, cap)},
+    )
+
+
 def queen_generation(
     base: Scenario,
     missile_pop: list[FlyGenome],
@@ -96,9 +112,13 @@ def queen_generation(
     seed: int = 7,
     elite_k: int = 2,
     mutation: float = 0.25,
+    replay: bool = False,
 ) -> dict:
     """Поколение гонки: круговой бой популяций на геометрии поколения → отбор обеих
-    сторон → экзамен чемпионов на трёх фиксированных геометриях."""
+    сторон → экзамен чемпионов на трёх фиксированных геометриях.
+
+    `replay` — один дополнительный бой чемпионов с кадрами (поле `replay`): гонку
+    вооружений видно на сцене. На отбор не влияет — `next_population` прежняя."""
     if len(missile_pop) < 2 or len(evader_pop) < 2:
         raise ValueError("красной королеве нужно минимум по два генома с каждой стороны")
     sc = generation_scenario(replace(base, dt=TRAIN_DT), gen, seed)
@@ -124,7 +144,7 @@ def queen_generation(
     nxt_e = evolve(evader_pop, e_fit, elite_k=max(1, elite_k), mutation=mutation, seed=seed + 1)
 
     exam = parallel_map(brain_battle, [(replace(sc, **g), missile_pop[m_best], evader_pop[e_best]) for g in EXAM_GEOMETRY])
-    return {
+    out = {
         "gen": int(gen),
         "scenario": {"aspect": sc.aspect, "range_m": sc.range_m, "v_t": sc.v_t, "off_axis_m": sc.off_axis_m},
         "missile_population": [g.to_json() for g in nxt_m],
@@ -145,6 +165,9 @@ def queen_generation(
             "cpa_m_median": _median([b["cpa_m"] for b in exam]),
         },
     }
+    if replay:
+        out["replay"] = replay_queen(sc, missile_pop[m_best], evader_pop[e_best], int(gen))
+    return out
 
 
 def _dn_weights(side: dict, who: str) -> np.ndarray:

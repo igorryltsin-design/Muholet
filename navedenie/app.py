@@ -1643,6 +1643,7 @@ class EvaderGenIn(BaseModel):
     elite_k: int = 3
     mutation: float = 0.25
     exam_every: int = 0  # N>0: на каждом N-м поколении — экзамен чемпиона на эталонной геометрии
+    replay: bool = False  # показать бой чемпиона: кадр-в-кадр, кроме чисел поколения
 
 
 @app.post("/api/evader/gen")
@@ -1669,6 +1670,7 @@ def evader_gen_endpoint(body: EvaderGenIn) -> dict[str, Any]:
             elite_k=max(1, body.elite_k),
             mutation=float(body.mutation),
             exam_every=max(0, body.exam_every),
+            replay=bool(body.replay),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -1704,6 +1706,7 @@ class QueenGenIn(BaseModel):
     pop: int = 6  # размер стороны при автостарте
     elite_k: int = 2
     mutation: float = 0.25
+    replay: bool = False  # показать бой чемпионов: кадр-в-кадр, кроме чисел поколения
 
 
 @app.post("/api/queen/gen")
@@ -1733,6 +1736,7 @@ def queen_gen_endpoint(body: QueenGenIn) -> dict[str, Any]:
             seed=body.seed,
             elite_k=max(1, body.elite_k),
             mutation=float(body.mutation),
+            replay=bool(body.replay),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))

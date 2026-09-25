@@ -19,6 +19,7 @@ import { FlightWorkspace } from './shell/FlightWorkspace'
 import { BrainWorkspace } from './shell/BrainWorkspace'
 import { SwarmWorkspace } from './shell/SwarmWorkspace'
 import { DuelWorkspace } from './shell/DuelWorkspace'
+import type { DuelReplay } from './shell/DuelWorkspace'
 import { ASPECT_LABEL, EVENT_RU, LAW_RU, MODE_LABEL, fmt } from './shell/labels'
 import { DEFAULT_SCENARIO, FEATURE_SCHEMA_VERSION, MODEL_VERSION, emptyLab, type BrainKind, type CamMode, type DuelMatrix, type Frame, type FlyGenome, type GenPoint, type LabData, type RunMetrics, type Scenario } from './types'
 
@@ -1554,6 +1555,20 @@ export function App() {
     URL.revokeObjectURL(a.href)
   }
 
+  /** учебный бой поколения — на сцене: те же проигрываемые траектории, что в «Рое»,
+   *  только стороны две (ракета и уклонист), а не веер мух */
+  const showDuelReplay = (r: DuelReplay) => {
+    const pts = Math.max(r.traj_m.length, r.traj_t.length)
+    setPlayback({
+      results: [{ traj_m: r.traj_m, traj_t: r.traj_t, fitness: r.fitness ?? 0, hit: r.hit }],
+      bestIdx: 0,
+      startedAt: performance.now(),
+      durationMs: Math.max(1600, Math.min(9000, pts * 34)),
+      caption: r.label,
+    })
+    setSceneBadge(`${r.label} · ${r.hit ? 'цель сбита' : `наименьшее сближение ${fmt(r.cpa_m, 0)} м`}`)
+  }
+
   const refreshExperiments = async () => {
     try {
       const r = await fetch('/api/experiments')
@@ -2198,6 +2213,7 @@ export function App() {
           onRunMatrix={() => void runDuelMatrix()}
           onExportCsv={exportDuelCsv}
           onDuelNow={(patch) => void run(patch)}
+          onShowReplay={showDuelReplay}
         />
       )}
       {ws === 'lab' && (

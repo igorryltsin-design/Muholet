@@ -63,8 +63,13 @@ def _shape(job: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def status() -> dict[str, Any]:
+    """Снимок для фронта: форма `_shape` плюс последний показ поколения (кадры боя
+    чемпионов). Кадры живут только здесь — в `_shape` их нет, поэтому хроника
+    кампании не раздувается траекториями."""
     with _LOCK:
-        return _shape(_JOB)
+        out = _shape(_JOB)
+        out["replay"] = _JOB.get("replay") if _JOB else None
+        return out
 
 
 def start(
@@ -112,6 +117,7 @@ def start(
             "apply": bool(apply),
             "generations_done": 0,
             "log": [],
+            "replay": None,
             "champions": None,
             "saved": {"ring": None, "weights": None},
             "error": None,
@@ -218,11 +224,14 @@ def _run(job: dict[str, Any], sc: Scenario) -> None:
             if job["stop_requested"]:
                 break
             t0 = time.monotonic()
-            out = queen_generation(sc, mp, ep, gen=g, seed=job["seed"])
+            out = queen_generation(sc, mp, ep, gen=g, seed=job["seed"], replay=True)
             mp = [fly_from_json(x) for x in out["missile_population"]]
             ep = [fly_from_json(x) for x in out["evader_population"]]
             with _LOCK:
                 job["champions"] = out["champions"]
+                # кампания видна: последний показ поколения живёт в задаче (в хронику
+                # и в _shape он не идёт — там только числа)
+                job["replay"] = out.get("replay")
                 job["generations_done"] = g + 1
                 job["log"].append(
                     {

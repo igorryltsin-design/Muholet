@@ -19,6 +19,7 @@ from statistics import median
 
 import numpy as np
 
+from navedenie.atmos import G0
 from navedenie.circuit import FlyCircuit, default_W
 from navedenie.engine import collect
 from navedenie.parallel import parallel_map
@@ -34,6 +35,10 @@ K_CPA = 0.002
 # шаг интегрирования школы: тот же порядок, что у ринга (бои массовые)
 TRAIN_DT = 0.02
 TRAIN_STRIDE = 100_000
+# показ учебного боя: кадры раз в 8 шагов (0.16 с при dt 0.02) — сцена успевает
+# играть весь 30-секундный бой, а ответ поколения остаётся порядка десятка килобайт
+REPLAY_STRIDE = 8
+REPLAY_MAX_PTS = 300
 
 
 def init_evader_population(n: int = 12, seed: int = 7) -> list[FlyGenome]:
@@ -106,6 +111,85 @@ def _battle_job(sc: Scenario, g: FlyGenome, law: str) -> dict:
     return battle(replace(sc, law=law), g)
 
 
+def _downsample(traj_m: list, traj_t: list) -> tuple[list, list]:
+    """Прореживание обеих траекторий одними индексами — точки пары не разъезжаются."""
+    n = min(len(traj_m), len(traj_t))
+    if n <= REPLAY_MAX_PTS:
+        return traj_m[:n], traj_t[:n]
+    step = -(-n // REPLAY_MAX_PTS)
+    idx = list(range(0, n, step))
+    if idx[-1] != n - 1:
+        idx.append(n - 1)
+    return [traj_m[i] for i in idx], [traj_t[i] for i in idx]
+
+
+def _first_turn(frames, n_target_g: float) -> dict | None:
+    """Первый устойчивый поворот цели: средняя за 1 с перегрузка больше четверти
+    располагаемой. Порог именно такой, потому что ответ на «почему они летят друг
+    на друга» — в геометрии признаков: уклонист привязан к близости (θ·4.0, ρ·0.4),
+    а не к желанию маневрировать, и вдали его команда почти нулевая. Окно в секунду
+    нужно, чтобы единичный численный скачок не выдавался за манёвр; при
+    n_target = 0 уклоняться нечем и поля нет."""
+    lim = 0.25 * float(n_target_g) * G0
+    if lim <= 0.0 or len(frames) < 4:
+        return None
+    step = float(frames[1].t) - float(frames[0].t)
+    if step <= 0.0:
+        return None
+    k = max(2, int(round(1.0 / step)))
+    if len(frames) <= k + 1:
+        return None
+    for i in range(len(frames) - k):
+        a, b = frames[i], frames[i + k]
+        dt = float(b.t) - float(a.t)
+        if dt <= 0.0:
+            continue
+        dv = np.asarray(b.target_v, dtype=float) - np.asarray(a.target_v, dtype=float)
+        if float(np.linalg.norm(dv)) / dt >= lim:
+            mid = frames[i + k // 2]
+            return {"t_s": float(mid.t), "range_m": float(mid.range_m)}
+    return None
+
+
+def replay_of(res, sc: Scenario, label: str, extra: dict | None = None) -> dict:
+    """Кадры одного боя для сцены: траектории обеих сторон + момент, когда цель
+    начала маневрировать. Вне отбора — на фитнес и эволюцию не влияет."""
+    frames = res.frames
+    traj_m, traj_t = _downsample(
+        [[float(x) for x in f.missile] for f in frames],
+        [[float(x) for x in f.target] for f in frames],
+    )
+    out = {
+        "label": label,
+        "traj_m": traj_m,
+        "traj_t": traj_t,
+        "hit": bool(res.hit),
+        "t_end": float(res.t_end if res.t_end is not None else 0.0),
+        "cpa_m": float(res.cpa_m),
+        "missile_n_int": float(res.n_int),
+        "n_target_g": float(sc.n_target),
+        "turn": _first_turn(frames, sc.n_target),
+        "scenario": {
+            "aspect": sc.aspect,
+            "range_m": sc.range_m,
+            "v_t": sc.v_t,
+            "off_axis_m": sc.off_axis_m,
+        },
+    }
+    if extra:
+        out.update(extra)
+    return out
+
+
+def replay_school(sc: Scenario, g: FlyGenome, gen: int) -> dict:
+    """Показ боя лучшего ученика школы на геометрии поколения (ракета — закон из
+    сценария пользователя, тот же набор сторон, что в `battle`)."""
+    s = replace(sc, duel=True, evader_law="brain", mode="pn", law=s_law(sc))
+    cap = min(s.t_max, float(s.fuse_life_s))
+    res = collect(s, stride=REPLAY_STRIDE, evader_circuit=genome_circuit(s, g))
+    return replay_of(res, s, f"школа · поколение {gen} · {s.law}", {"fitness": _fitness(res, cap)})
+
+
 def evaluate_generation(
     base: Scenario,
     population: list[FlyGenome],
@@ -142,9 +226,14 @@ def train_generation(
     elite_k: int = 3,
     mutation: float = 0.25,
     exam_every: int = 0,
+    replay: bool = False,
 ) -> dict:
     """Поколение школы: тренировочная геометрия (seed, gen) → отбор → следующее
-    поколение; опционально — экзамен на эталонной геометрии (валидация)."""
+    поколение; опционально — экзамен на эталонной геометрии (валидация).
+
+    `replay` — один дополнительный бой чемпиона с кадрами (его траектория в поле
+    `replay`): учёбу видно на сцене. В отбор не входит, `next_population` от него
+    бит-в-бит прежняя."""
     for law in laws:
         if law not in LAWS:
             raise ValueError(f"неизвестный закон ракеты для школы: {law!r}")
@@ -176,4 +265,6 @@ def train_generation(
     if exam_every and int(gen) % int(exam_every) == 0:
         ex = evaluate_generation(sc, [population[best]], laws, scen=exam_scenario(sc))
         out["exam"] = ex[0]
+    if replay:
+        out["replay"] = replay_school(sc, population[best], int(gen))
     return out

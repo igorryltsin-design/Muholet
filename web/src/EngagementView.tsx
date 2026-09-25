@@ -33,6 +33,9 @@ export type Playback = {
   durationMs: number
   /** демо-гонка: ракета[0] — стажёр, ракета[bestIdx] — ветеран, летят одновременно */
   race?: boolean
+  /** подпись над веером траекторий: по умолчанию «рой · N мух», у учебного боя
+   *  дуэли своя («школа · поколение 3 · tpn») — подписывать её роем было бы неверно */
+  caption?: string
 }
 
 /** Палитры 3D-сцены: ночь (фосфор) и день (пасмурное небо, тёмные метки). */
@@ -1274,7 +1277,7 @@ export function EngagementView({
             const sz = bb.getSize(new THREE.Vector3())
             placeGrid(bb.getCenter(new THREE.Vector3()), Math.max(sz.x, sz.z))
             // численность роя — подписью над веером траекторий поколения
-            const pop = makeLabel(`рой · ${pb.results.length} мух`, dayRef.current ? THEME_DAY.z : THEME_NIGHT.z, 0.5)
+            const pop = makeLabel(pb.caption ?? `рой · ${pb.results.length} мух`, dayRef.current ? THEME_DAY.z : THEME_NIGHT.z, 0.5)
             pop.spr.position.copy(bb.getCenter(new THREE.Vector3())).add(new THREE.Vector3(0, 1.1, 0))
             scene.add(pop.spr)
             swarmLabels.push(pop.spr)

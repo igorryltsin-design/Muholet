@@ -44,6 +44,7 @@ SHAPE = {
     "save_duel",
     "apply",
     "log",
+    "replay",
     "champions",
     "saved",
     "error",
@@ -94,6 +95,7 @@ def test_status_has_shape_before_any_job() -> None:
     assert set(st) == SHAPE
     assert st["running"] is False and st["generations_done"] == 0 and st["champions"] is None
     assert st["saved"] == {"ring": None, "weights": None}
+    assert st["replay"] is None
 
 
 def test_background_loop_matches_manual_loop() -> None:
