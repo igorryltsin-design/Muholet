@@ -35,6 +35,9 @@ jobs:
         env:
           VITE_BASE: /Muholet/
       - uses: actions/configure-pages@v5
+        with:
+          # включает Pages у репо с источником Actions, если он ещё не включён
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
