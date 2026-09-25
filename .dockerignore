@@ -1,0 +1,11 @@
+.git
+.venv
+web/node_modules
+ROADMAP.md
+*.log
+*.tar.gz
+.DS_Store
+data/raw
+tests
+tools
+artifacts

@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+web/node_modules/
+tools/manual/node_modules/
+web/dist/
+data/raw/
+.DS_Store
+.pytest_cache/
+wheels/
+muholet-amd64.tar.gz
+navedenie.egg-info/
+.zcode/
+data/weights_*.npz

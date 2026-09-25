@@ -1,0 +1,42 @@
+# Проверка стенда: python-тесты + сборка фронта. Протокол повторяет раздел
+# «Как запускать и проверять» в ROADMAP.md — те же команды, что у ночных смен.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Установка стенда
+        run: pip install -e ".[dev]"
+      - name: Тесты
+        run: python -m pytest -q
+
+  web:
+    name: tsc + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Установка фронта
+        working-directory: web
+        run: npm ci
+      - name: Проверка типов
+        working-directory: web
+        run: npx tsc --noEmit
+      - name: Сборка
+        working-directory: web
+        run: npm run build
