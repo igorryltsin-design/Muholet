@@ -219,6 +219,18 @@ export function LabView({
   return (
     <div className="labws">
       <nav className="lab-nav" aria-label="Разделы лаборатории">
+        {/* узкий экран: вместо длинной колонки кнопок — один выпадающий список с теми же группами */}
+        <select className="lab-nav__select" value={tab} aria-label="Экран лаборатории" onChange={(e) => onTab(e.target.value as LabTab)}>
+          {LAB_GROUPS.map((group) => (
+            <optgroup key={group.title} label={group.title}>
+              {group.items.map(([key, label]) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
         {LAB_GROUPS.map((group) => (
           <div key={group.title} className="lab-nav__group">
             <span>{group.title}</span>

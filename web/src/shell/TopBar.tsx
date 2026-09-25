@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { Menu, type MenuItem } from '../ui'
 
 /** Рабочие пространства: одновременно виден только один рабочий контекст. */
@@ -13,8 +14,19 @@ export const WORKSPACES: [Workspace, string, string][] = [
 
 /** Постоянный переключатель пространств в верхней навигации. */
 export function WorkspaceNavigation({ value, onChange }: { value: Workspace; onChange: (w: Workspace) => void }) {
+  // на телефоне полоска вкладок прокручивается вбок: активная вкладка всегда в поле зрения
+  const navRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const nav = navRef.current
+    const btn = nav?.querySelector<HTMLElement>('button.on')
+    if (!nav || !btn || nav.scrollWidth <= nav.clientWidth) return
+    const n = nav.getBoundingClientRect()
+    const b = btn.getBoundingClientRect()
+    if (b.left < n.left) nav.scrollLeft += b.left - n.left - 12
+    else if (b.right > n.right) nav.scrollLeft += b.right - n.right + 12
+  }, [value])
   return (
-    <nav className="workspace-nav" role="tablist" aria-label="Рабочие пространства">
+    <nav className="workspace-nav" role="tablist" aria-label="Рабочие пространства" ref={navRef}>
       {WORKSPACES.map(([key, label, tip]) => (
         <button
           key={key}

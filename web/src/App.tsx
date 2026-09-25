@@ -633,6 +633,8 @@ export function App() {
 
   useEffect(() => {
     document.body.classList.toggle('theme-day', day)
+    // панель мобильного браузера — в цвет страницы (--surface-page темы)
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', day ? '#e8eeea' : '#0a0f14')
   }, [day])
 
   // Горячие клавиши: Пробел — пуск, X — пасхалка.
@@ -658,9 +660,21 @@ export function App() {
     const tip = document.createElement('div')
     tip.className = 'tooltip'
     document.body.appendChild(tip)
+    // тач: mouseover эмулируется после тапа и подсказка залипает поверх кнопки, поэтому
+    // пальцем она открывается только по значку «?» и сама гаснет — по тапу мимо, прокрутке, таймеру
+    let touch = false
+    let hideTimer = 0
+    const hide = () => tip.classList.remove('on')
+    const onDown = (e: PointerEvent) => {
+      touch = e.pointerType !== 'mouse'
+      if (touch) hide()
+    }
     const onOver = (e: MouseEvent) => {
       const el = (e.target as HTMLElement).closest?.('[data-tip]') as HTMLElement | null
       if (!el) return
+      if (touch && !el.classList.contains('hint')) return
+      window.clearTimeout(hideTimer)
+      if (touch) hideTimer = window.setTimeout(hide, 6000)
       tip.textContent = el.getAttribute('data-tip') || ''
       tip.classList.add('on')
       const r = el.getBoundingClientRect()
@@ -673,11 +687,18 @@ export function App() {
       tip.style.top = `${y}px`
     }
     const onOut = (e: MouseEvent) => {
+      // после тапа браузер шлёт синтетический mouseout — пальцем гасим только тапом мимо, прокруткой и таймером
+      if (touch) return
       if ((e.target as HTMLElement).closest?.('[data-tip]')) tip.classList.remove('on')
     }
+    document.addEventListener('pointerdown', onDown, true)
+    document.addEventListener('scroll', hide, true)
     document.addEventListener('mouseover', onOver)
     document.addEventListener('mouseout', onOut)
     return () => {
+      window.clearTimeout(hideTimer)
+      document.removeEventListener('pointerdown', onDown, true)
+      document.removeEventListener('scroll', hide, true)
       document.removeEventListener('mouseover', onOver)
       document.removeEventListener('mouseout', onOut)
       tip.remove()

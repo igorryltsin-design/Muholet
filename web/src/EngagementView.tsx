@@ -1557,7 +1557,10 @@ export function EngagementView({
           )}
         </svg>
       )}
-      <p className="view-hint">левая кнопка — вращать · колесо — масштаб · X красная — дальность · Y синяя — бок · Z зелёная — высота, км</p>
+      <p className="view-hint">
+        <span className="for-mouse">левая кнопка — вращать · колесо — масштаб · </span>
+        <span className="for-touch">палец — вращать · щипок — масштаб · </span>X красная — дальность · Y синяя — бок · Z зелёная — высота, км
+      </p>
     </div>
   )
 }
