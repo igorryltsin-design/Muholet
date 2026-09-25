@@ -111,44 +111,47 @@ export function FlightWorkspace({
             </div>
           )}
 
-          <div className="scene-overlay scene-overlay--topleft">
-            <span className="chip" data-tip="Как летит цель относительно ракеты: навстречу, поперёк курса или в догон.">
-              {ASPECT_LABEL[sc.aspect]}
-            </span>
-            <span className={`chip ${sc.mode === 'bio' ? 'is-warn' : ''}`} data-tip="Закон управления: ПН — эталонная математика, био — мозг дрозофилы, смешанный — био с резервным ПН.">
-              {MODE_LABEL[sc.mode]}
-            </span>
-            <span className="chip" data-tip="Закон наведения режима ПН.">
-              {LAW_RU[sc.law] ?? sc.law}
-            </span>
-            <span className={`chip ${frame?.lock ? 'is-active' : ''}`} data-tip="Цель в поле зрения ГСН — наведение идёт по ней.">
-              {frame?.lock ? 'захват' : 'поиск'}
-            </span>
-            <span className="chip num" data-tip="Время от пуска.">
-              t = {fmt(frame?.t ?? 0, 2)} с
-            </span>
-          </div>
+          {/* HUD сцены: слева контекст пуска, справа управление видом; на узких экранах — два ряда */}
+          <div className="scene-hud">
+            <div className="scene-overlay scene-overlay--topleft">
+              <span className="chip" data-tip="Как летит цель относительно ракеты: навстречу, поперёк курса или в догон.">
+                {ASPECT_LABEL[sc.aspect]}
+              </span>
+              <span className={`chip ${sc.mode === 'bio' ? 'is-warn' : ''}`} data-tip="Закон управления: ПН — эталонная математика, био — мозг дрозофилы, смешанный — био с резервным ПН.">
+                {MODE_LABEL[sc.mode]}
+              </span>
+              <span className="chip chip--law" data-tip="Закон наведения режима ПН.">
+                {LAW_RU[sc.law] ?? sc.law}
+              </span>
+              <span className={`chip ${frame?.lock ? 'is-active' : ''}`} data-tip="Цель в поле зрения ГСН — наведение идёт по ней.">
+                {frame?.lock ? 'захват' : 'поиск'}
+              </span>
+              <span className="chip num" data-tip="Время от пуска.">
+                t = {fmt(frame?.t ?? 0, 2)} с
+              </span>
+            </div>
 
-          <div className="scene-overlay scene-overlay--topright">
-            {statusText && <span className={`chip ${statusKind ? (statusKind === 'is-ok' ? 'is-ok' : 'is-bad') : ''}`}>{statusText}</span>}
-            <select value={camMode} data-tip="Режим камеры: авто следит за серединой «ракета—цель»; свободная — под вашим управлением; вдогон — вид из-за ракеты. Двойной клик по сцене — вернуть взгляд." onChange={(e) => onCamMode(e.target.value as CamMode)}>
-              <option value="auto">камера: авто</option>
-              <option value="free">камера: свободная</option>
-              <option value="chase">камера: вдогон</option>
-            </select>
-            <button type="button" className={geometryOn ? 'on' : ''} data-tip="Треугольник перехвата, круг БЧ, вектор команды и ожидаемый промах прямо на сцене." onClick={onToggleGeometry}>
-              геометрия
-            </button>
-            {sc.aspect === 'free' && (
-              <button type="button" className={freeOpen ? 'on' : ''} data-tip="Крупный редактор ручной расстановки: план, профиль, курсы и пресеты. В свободной схеме открывается сам, сворачивается и возвращается сюда." onClick={() => setFreeOpen((v) => !v)}>
-                расстановка
+            <div className="scene-overlay scene-overlay--topright">
+              {statusText && <span className={`chip scene-status ${statusKind ? (statusKind === 'is-ok' ? 'is-ok' : 'is-bad') : ''}`}>{statusText}</span>}
+              <select value={camMode} data-tip="Режим камеры: авто следит за серединой «ракета—цель»; свободная — под вашим управлением; вдогон — вид из-за ракеты. Двойной клик по сцене — вернуть взгляд." onChange={(e) => onCamMode(e.target.value as CamMode)}>
+                <option value="auto">камера: авто</option>
+                <option value="free">камера: свободная</option>
+                <option value="chase">камера: вдогон</option>
+              </select>
+              <button type="button" className={geometryOn ? 'on' : ''} data-tip="Треугольник перехвата, круг БЧ, вектор команды и ожидаемый промах прямо на сцене." onClick={onToggleGeometry}>
+                геометрия
               </button>
-            )}
+              {sc.aspect === 'free' && (
+                <button type="button" className={freeOpen ? 'on' : ''} data-tip="Крупный редактор ручной расстановки: план, профиль, курсы и пресеты. В свободной схеме открывается сам, сворачивается и возвращается сюда." onClick={() => setFreeOpen((v) => !v)}>
+                  расстановка
+                </button>
+              )}
+              <button type="button" className="scene-fab scene-fab--params" aria-expanded={inspOpen} onClick={() => setInspOpen((o) => !o)}>
+                {inspOpen ? 'Скрыть параметры' : 'Параметры пуска'}
+              </button>
+            </div>
           </div>
 
-          <button type="button" className="scene-fab scene-fab--params" onClick={() => setInspOpen((o) => !o)}>
-            {inspOpen ? 'Скрыть параметры' : 'Параметры пуска'}
-          </button>
           <button type="button" className="scene-fab scene-fab--tel" onClick={() => setTelOpen(true)}>
             Телеметрия
           </button>
@@ -169,7 +172,15 @@ export function FlightWorkspace({
         <TelemetryBar frame={frame} scenario={sc} statusText={statusText} statusKind={statusKind} onOpenFull={() => setTelOpen(true)} />
       </div>
 
+      {/* выезжающий инспектор (компактный экран) закрывается и тапом мимо панели */}
+      {inspOpen && <div className="inspector-scrim" aria-hidden="true" onClick={() => setInspOpen(false)} />}
       <div className={inspOpen ? 'inspector is-open' : 'inspector'}>
+        <div className="inspector__head">
+          <b>Параметры пуска</b>
+          <button type="button" onClick={() => setInspOpen(false)}>
+            Закрыть
+          </button>
+        </div>
         <ScenarioInspector sc={sc} set={set} onManeuver={onManeuver} busy={busy} frame={frame} day={day} />
       </div>
 

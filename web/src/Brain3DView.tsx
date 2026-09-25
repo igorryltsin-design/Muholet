@@ -620,19 +620,22 @@ export function Brain3DView({ frame, kind, day }: { frame: Frame | null; kind: B
   const mismatch = Boolean(frame && frame.circuit.kind !== kind)
   return (
     <div className="brainwrap" ref={wrapRef}>
-      <button
-        type="button"
-        className="brain__fs"
-        data-tip="Развернуть мозг во весь экран (Esc — выйти)."
-        onClick={() => {
-          const el = wrapRef.current
-          if (!el) return
-          if (document.fullscreenElement) void document.exitFullscreen()
-          else void el.requestFullscreen()
-        }}
-      >
-        во весь экран
-      </button>
+      {/* на iPhone Fullscreen API для элементов нет — кнопку не показываем */}
+      {document.fullscreenEnabled && (
+        <button
+          type="button"
+          className="brain__fs"
+          data-tip="Развернуть мозг во весь экран (Esc — выйти)."
+          onClick={() => {
+            const el = wrapRef.current
+            if (!el) return
+            if (document.fullscreenElement) void document.exitFullscreen()
+            else void el.requestFullscreen()
+          }}
+        >
+          во весь экран
+        </button>
+      )}
       <canvas className="viewport viewport--brain" ref={ref} />
       <p className="brainhint">
         {hover && hoverReg ? (
@@ -642,7 +645,11 @@ export function Brain3DView({ frame, kind, day }: { frame: Frame | null; kind: B
             {hoverReg.n.toLocaleString('ru')}
           </>
         ) : (
-          'Каждая точка — нейрон, яркость — его реальная активность. Вращайте мышью, наводите на регионы.'
+          <>
+            Каждая точка — нейрон, яркость — его реальная активность.{' '}
+            <span className="for-mouse">Вращайте мышью, наводите на регионы.</span>
+            <span className="for-touch">Вращайте пальцем, касайтесь регионов.</span>
+          </>
         )}
       </p>
       <p className="brainmeta">
