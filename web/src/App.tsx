@@ -2373,6 +2373,7 @@ export function App() {
           onExportCsv={exportDuelCsv}
           onDuelNow={(patch) => void run(patch)}
           onShowReplay={showDuelReplay}
+          serverOnline={serverOnline}
         />
       )}
       {ws === 'lab' && (
@@ -2481,6 +2482,7 @@ export function App() {
           onVoiceKind={setVoiceKind}
           humorOn={humorOn}
           onHumor={setHumorOn}
+          serverOnline={serverOnline}
         />
       )}
       {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}

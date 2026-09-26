@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { EngagementView, type Playback } from '../lazyViews'
+import { ServerOnlyBadge } from '../lab/ServerOnlyBadge'
 import { ASPECT_LABEL, EVADER_RU, LAW_RU, fmt } from './labels'
 import type { DuelMatrix, FlyGenome, Scenario } from '../types'
 import type { CamMode, Frame } from '../types'
@@ -177,6 +178,7 @@ export function DuelWorkspace({
   onExportCsv,
   onDuelNow,
   onShowReplay,
+  serverOnline,
 }: {
   frame: Frame | null
   sc: Scenario
@@ -205,6 +207,7 @@ export function DuelWorkspace({
   onDuelNow: (patch: Partial<Scenario>) => void
   /** выпустить учебный бой поколения на сцену: проигрывание траекторий вместо цифр */
   onShowReplay: (r: DuelReplay) => void
+  serverOnline: boolean | null
 }) {
   const cellOf = (row: string, col: string) => duelMatrix?.cells.find((c) => c.row === row && c.col === col) ?? null
   const wins = duelMatrix?.cells.filter((c) => c.win === 'missile').length ?? 0
@@ -1442,9 +1445,12 @@ export function DuelWorkspace({
                     <input type="number" min={1} max={15} value={duelRepeats} onChange={(e) => onDuelRepeats(Math.max(1, Math.min(15, Number(e.target.value) || 1)))} />
                   </label>
                 </div>
-                <button type="button" className="primary" data-tip="Посчитать все бои выбранных сторон на текущих условиях. Только на стенде." disabled={duelBusy || busy} onClick={onRunMatrix}>
-                  {duelBusy ? 'ринг считает…' : 'Считать ринг'}
-                </button>
+                <div className="row" style={{ gap: 8 }}>
+                  <button type="button" className="primary" data-tip="Посчитать все бои выбранных сторон на текущих условиях. Только на стенде." disabled={duelBusy || busy || serverOnline === false} onClick={onRunMatrix}>
+                    {duelBusy ? 'ринг считает…' : 'Считать ринг'}
+                  </button>
+                  {serverOnline === false && <ServerOnlyBadge />}
+                </div>
                 <div className="table-card">
                   <table>
                     <thead>

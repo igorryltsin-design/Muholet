@@ -178,6 +178,7 @@ select { cursor: pointer; }
 .chip.is-warn { border-color: var(--accent-secondary); color: var(--accent-secondary); }
 .chip.is-bad { border-color: var(--status-danger); color: var(--status-danger); }
 .chip.is-ok { border-color: var(--status-success); color: var(--status-success); }
+.server-only-badge { font-size: 11px; padding: 2px 8px; cursor: help; }
 
 /* ═══ каркас: верхняя панель + активное пространство ═══ */
 .shell { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); }
