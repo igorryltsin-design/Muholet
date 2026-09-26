@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { TopBar, type Workspace } from './TopBar'
+import { WorkspaceTransition } from './WorkspaceTransition'
 import type { MenuItem } from '../ui'
 
 /** Каркас приложения: верхняя панель + активное рабочее пространство. */
@@ -62,7 +63,7 @@ export function AppShell({
         menuItems={menuItems}
       />
       <main className="workspace">
-        {children}
+        <WorkspaceTransition transitionKey={workspace}>{children}</WorkspaceTransition>
         {showCinemaBtn && (
           <button
             type="button"

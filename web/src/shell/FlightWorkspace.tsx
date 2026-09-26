@@ -4,6 +4,7 @@ import { ScenarioInspector } from './ScenarioInspector'
 import { FreeGeometryEditor } from './FreeGeometryEditor'
 import { TelemetryBar, TelemetryDrawer } from './TelemetryBar'
 import { ASPECT_LABEL, LAW_RU, MODE_LABEL, fmt } from './labels'
+import { useTweenedNumber } from '../useTween'
 import type { CamMode, Frame, Scenario } from '../types'
 
 /** Рабочее пространство «Полёт»: сцена + контекстный инспектор + полоса телеметрии. */
@@ -63,6 +64,7 @@ export function FlightWorkspace({
   const [telOpen, setTelOpen] = useState(false)
   // крупный редактор расстановки — плавающей панелью поверх сцены (в колонке инспектора он мелок)
   const [freeOpen, setFreeOpen] = useState(true)
+  const tHud = useTweenedNumber(frame?.t ?? 0)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -127,7 +129,7 @@ export function FlightWorkspace({
                 {frame?.lock ? 'захват' : 'поиск'}
               </span>
               <span className="chip num" data-tip="Время от пуска.">
-                t = {fmt(frame?.t ?? 0, 2)} с
+                t = {fmt(tHud, 2)} с
               </span>
             </div>
 
