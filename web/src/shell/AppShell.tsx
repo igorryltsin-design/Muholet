@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { TopBar, type Workspace } from './TopBar'
 import { WorkspaceTransition } from './WorkspaceTransition'
+import { DemoBanner } from './DemoBanner'
 import type { MenuItem } from '../ui'
 
 /** Каркас приложения: верхняя панель + активное рабочее пространство. */
@@ -20,6 +21,9 @@ export function AppShell({
   onHelp,
   cinema,
   onToggleCinema,
+  demoBanner,
+  onDemoTour,
+  onDemoBannerClose,
   menuItems,
   children,
 }: {
@@ -39,6 +43,10 @@ export function AppShell({
   /** сцена во весь экран без шапки/панелей — усилитель «вау» для показа, не для каждого пуска */
   cinema: boolean
   onToggleCinema: () => void
+  /** баннер после демо-перехвата при первом визите (App.tsx::runDemo) */
+  demoBanner: boolean
+  onDemoTour: () => void
+  onDemoBannerClose: () => void
   menuItems: MenuItem[]
   children: ReactNode
 }) {
@@ -74,6 +82,7 @@ export function AppShell({
             {cinema ? '✕ кино' : '⛶ кино'}
           </button>
         )}
+        {demoBanner && <DemoBanner onTour={onDemoTour} onClose={onDemoBannerClose} />}
       </main>
     </div>
   )

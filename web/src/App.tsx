@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Playback } from './EngagementView'
 import { LabView, type LabTab, type AblationData, type CaptureZoneData, type CoevData, type DistillData, type FaultsData, type LadderData, type MapData, type MonteCarloData, type ScalingData, type TransferData } from './lab/LabView'
 import { HelpView } from './HelpView'
+import { Tour } from './shell/Tour'
 import { applyServerW, isTrained, markTrained, setBrainKind } from './brain'
 import { computeRunMetrics, navMetrics } from './metrics'
 import { localRun } from './localSim'
@@ -92,6 +93,25 @@ function rusFrame(fr: Frame): Frame {
 
 const nCellsLabel = (b: BrainKind) => (b === 'full' ? 4439 : b === 'connectome' ? 108781 : 279)
 
+/** Демо-сценарий первого визита (App.tsx::runDemo) — наглядный перехват со змейкой,
+ * умеренная дальность. Считается локально (localRun), без единого сетевого запроса —
+ * работает одинаково на стенде и на GitHub Pages. */
+const DEMO_SCENARIO: Scenario = { ...DEFAULT_SCENARIO, range_m: 5000, maneuver: 'weave', n_target: 6 }
+
+/** Эвристика «уже реальный пользователь»: панели/секции сворачивались хоть раз —
+ * значит стенд уже открывали до появления демо (ui.tsx::resetLayout — то же именование). */
+function hasPriorUsage(): boolean {
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const k = localStorage.key(i)
+      if (k && (k.startsWith('muholet-panel-') || k.startsWith('muholet-acc-'))) return true
+    }
+  } catch {
+    /* приватный режим — считаем «первый визит» */
+  }
+  return false
+}
+
 export function App() {
   // сценарий гидратируется из localStorage синхронно (в инициализаторе):
   // любой effect-restore проигрывает автосохранению [sc] на том же коммите
@@ -162,10 +182,13 @@ export function App() {
   const [training, setTraining] = useState(false)
   const [labTab, setLabTab] = useState<LabTab>('run')
   const [helpOpen, setHelpOpen] = useState(false)
+  const [tourOpen, setTourOpen] = useState(false)
   // пасхалка: муха за штурвалом — разрез корпуса, рычаги = реальные команды DN
   const [egg, setEgg] = useState(false)
   // кинорежим: сцена во весь экран без шапки/панелей (клавиша K, выход — Esc)
   const [cinema, setCinema] = useState(false)
+  // баннер после демо-перехвата первого визита (App.tsx::runDemo)
+  const [demoBanner, setDemoBanner] = useState(false)
   // озвучка: жужжание в тон манёвра + голосовые фразы (Silero, web/public/audio).
   // Настройки читаются СИНХРОННО в инициализаторах useState: в dev-StrictMode
   // эффект записи на втором проходе маунта натирает хранилище дефолтами, пока
@@ -820,6 +843,50 @@ export function App() {
     if (finalWendy?.final) showWendy(finalWendy.final)
   }
 
+  /** Демо-прогон первого визита: та же playFrames-раскадровка, что у настоящего пуска,
+   *  но данные — из синхронного localRun (ноль сетевых запросов, честная работа на
+   *  GitHub Pages) и НЕ попадают в лабораторию (labRef/recordRun) — это витрина, а не
+   *  прогон, который должен смешаться с историей реальных экспериментов. */
+  const runDemo = () => {
+    // флаг «показывали» ставится здесь, а не в эффекте-планировщике: React
+    // StrictMode в dev монтирует эффект дважды (mount→cleanup→mount) — если
+    // писать флаг в самом эффекте, первый (одноразовый) вызов помечает демо
+    // «показанным» раньше, чем второй (настоящий) успевает поставить свой
+    // таймер, и демо не показывается вовсе. Здесь же исполнение гарантированно
+    // одно: до этой строки доходит только таймер, который дожил до срабатывания.
+    try {
+      localStorage.setItem('muholet-demo-seen', '1')
+    } catch {
+      /* приватный режим */
+    }
+    const frames = [...localRun(DEMO_SCENARIO)]
+    if (frames.length < 2 || stop.current) return
+    lastFramesRef.current = frames
+    const m = computeRunMetrics(frames, DEMO_SCENARIO.kill_radius_m)
+    setLog((rows) => ['Демо-перехват (первый визит) — управление вернётся после показа.', ...rows].slice(0, 14))
+    void playFrames(frames, summaryOf(m), undefined, null, false, undefined, m.hit).then(() => {
+      if (!stop.current) setDemoBanner(true)
+    })
+  }
+
+  // Демо при первом визите: без сохранённых панелей/секций — значит стенд открыли впервые.
+  // Флаг «показывали» ставится внутри runDemo(), не здесь — см. комментарий там
+  // (React StrictMode дважды монтирует этот эффект в dev). Прерывается кликом/
+  // навигацией через тот же stop.current, что и настоящий пуск (playFrames
+  // проверяет его каждую итерацию).
+  useEffect(() => {
+    let seen = true
+    try {
+      seen = localStorage.getItem('muholet-demo-seen') === '1'
+    } catch {
+      /* приватный режим — считаем «уже показывали», чтобы не мигать демо каждый визит */
+    }
+    if (seen || hasPriorUsage()) return
+    const t = window.setTimeout(runDemo, 400)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   /** Метрики прогона в историю лаборатории: серверные поля если есть, иначе считаем по кадрам. */
   const recordRun = (
     frames: Frame[],
@@ -1058,6 +1125,7 @@ export function App() {
     setSceneBadge(null)
     setSwarmCurve(null)
     setSwarmValid([])
+    setDemoBanner(false) // настоящий пуск — демо-баннер своё сказал
     if (shtrumHideRef.current) window.clearTimeout(shtrumHideRef.current)
     setShtrumCaption(null)
     if (wendyHideRef.current) window.clearTimeout(wendyHideRef.current)
@@ -2163,6 +2231,12 @@ export function App() {
         buzz(HAPTIC.cinemaToggle)
         setCinema((v) => !v)
       }}
+      demoBanner={demoBanner}
+      onDemoTour={() => {
+        setDemoBanner(false)
+        setTourOpen(true)
+      }}
+      onDemoBannerClose={() => setDemoBanner(false)}
       menuItems={[
         {
           label: soundOn ? 'Озвучка: выключить' : 'Озвучка: включить',
@@ -2178,6 +2252,8 @@ export function App() {
           onClick: () => setHumorOn((v) => !v),
         },
         { label: cinema ? 'Кинорежим: выключить' : 'Кинорежим (K)', onClick: () => setCinema((v) => !v) },
+        { label: 'Показать демо заново', onClick: () => { setWs('flight'); runDemo() } },
+        { label: 'Короткий тур: с чего начать', onClick: () => setTourOpen(true) },
         { label: 'Сбросить раскладку панелей', onClick: resetLayout },
       ]}
     >
@@ -2408,6 +2484,7 @@ export function App() {
         />
       )}
       {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}
+      {tourOpen && <Tour onClose={() => setTourOpen(false)} />}
     </AppShell>
   )
 }

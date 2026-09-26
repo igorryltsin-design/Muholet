@@ -133,7 +133,7 @@ export function FlightWorkspace({
               </span>
             </div>
 
-            <div className="scene-overlay scene-overlay--topright">
+            <div className="scene-overlay scene-overlay--topright" data-tour="camera">
               {statusText && <span className={`chip scene-status ${statusKind ? (statusKind === 'is-ok' ? 'is-ok' : 'is-bad') : ''}`}>{statusText}</span>}
               <select value={camMode} data-tip="Режим камеры: авто следит за серединой «ракета—цель»; свободная — под вашим управлением; вдогон — вид из-за ракеты. Двойной клик по сцене — вернуть взгляд." onChange={(e) => onCamMode(e.target.value as CamMode)}>
                 <option value="auto">камера: авто</option>

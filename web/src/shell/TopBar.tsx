@@ -26,7 +26,7 @@ export function WorkspaceNavigation({ value, onChange }: { value: Workspace; onC
     else if (b.right > n.right) nav.scrollLeft += b.right - n.right + 12
   }, [value])
   return (
-    <nav className="workspace-nav" role="tablist" aria-label="Рабочие пространства" ref={navRef}>
+    <nav className="workspace-nav" role="tablist" aria-label="Рабочие пространства" ref={navRef} data-tour="workspaces">
       {WORKSPACES.map(([key, label, tip]) => (
         <button
           key={key}
@@ -36,6 +36,7 @@ export function WorkspaceNavigation({ value, onChange }: { value: Workspace; onC
           className={value === key ? 'on' : ''}
           data-tip={tip}
           data-tip-pos="down"
+          data-tour={key === 'lab' ? 'lab-nav' : undefined}
           onClick={() => onChange(key)}
         >
           {label}
@@ -103,11 +104,11 @@ export function TopBar({
         </span>
       </div>
       {running ? (
-        <button type="button" className="launch-btn is-stop" onClick={onStop} data-tip="Остановить текущий расчёт (работающий расчёт всегда можно остановить).">
+        <button type="button" className="launch-btn is-stop" onClick={onStop} data-tip="Остановить текущий расчёт (работающий расчёт всегда можно остановить)." data-tour="launch">
           Останов
         </button>
       ) : (
-        <button type="button" className="launch-btn go" onClick={onLaunch} disabled={!canLaunch} data-tip="Прогнать перехват с текущими условиями (Пробел).">
+        <button type="button" className="launch-btn go" onClick={onLaunch} disabled={!canLaunch} data-tip="Прогнать перехват с текущими условиями (Пробел)." data-tour="launch">
           Пуск
         </button>
       )}

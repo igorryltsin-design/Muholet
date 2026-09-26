@@ -11,7 +11,12 @@ import { useEffect, useRef, useState } from 'react'
  */
 export function useTweenedNumber(value: number, ms = 180): number {
   const [shown, setShown] = useState(value)
-  const fromRef = useRef(value)
+  // текущее нарисованное значение, обновляется НА КАЖДОМ тике (не только на
+  // завершении) — старт следующего твина берётся отсюда. Кадры телеметрии
+  // приходят чаще (40/80мс), чем длится твин (180мс): без этого «from»
+  // застревал на значении до самого первого прерванного твина, и число не
+  // доезжало до цели, а на каждом новом кадре срывалось назад к этой точке
+  const shownRef = useRef(value)
   const rafRef = useRef(0)
 
   useEffect(() => {
@@ -24,23 +29,20 @@ export function useTweenedNumber(value: number, ms = 180): number {
       }
     })()
     if (reduced) {
-      fromRef.current = value
+      shownRef.current = value
       setShown(value)
       return
     }
-    const from = fromRef.current
+    const from = shownRef.current
     if (from === value) return
     const t0 = performance.now()
     const tick = () => {
       const p = Math.min(1, (performance.now() - t0) / ms)
       const eased = 1 - (1 - p) * (1 - p) // ease-out — быстрый старт, мягкий подход к цели
       const cur = from + (value - from) * eased
+      shownRef.current = cur
       setShown(cur)
-      if (p < 1) {
-        rafRef.current = requestAnimationFrame(tick)
-      } else {
-        fromRef.current = value
-      }
+      if (p < 1) rafRef.current = requestAnimationFrame(tick)
     }
     cancelAnimationFrame(rafRef.current)
     rafRef.current = requestAnimationFrame(tick)
