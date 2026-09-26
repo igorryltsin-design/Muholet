@@ -129,6 +129,14 @@ type ChartState = {
 
 const chartStates = new WeakMap<HTMLCanvasElement, ChartState>()
 const chartAttached = new WeakSet<HTMLCanvasElement>()
+
+function isCoarsePointer(): boolean {
+  try {
+    return matchMedia('(pointer: coarse)').matches
+  } catch {
+    return false
+  }
+}
 // Подписи графиков — часть основного научного интерфейса. Поля рассчитаны под
 // читаемые 12–13 px на Full HD, без необходимости увеличивать масштаб браузера.
 const CPAD = { l: 56, r: 12, t: 30, b: 26 }
@@ -277,7 +285,11 @@ function renderChart(cv: HTMLCanvasElement, st: ChartState) {
   g.fillStyle = P.dim
   g.textAlign = 'left'
   g.font = '12px "Share Tech Mono", monospace'
-  g.fillText(`n=${n} · колесо — масштаб · тянуть — сдвиг · 2×клик — сброс`, CPAD.l, h - 4)
+  g.fillText(
+    isCoarsePointer() ? `n=${n} · палец — сдвиг · 2×тап — сброс` : `n=${n} · колесо — масштаб · тянуть — сдвиг · 2×клик — сброс`,
+    CPAD.l,
+    h - 4,
+  )
 
   // кнопки: PNG / CSV / сброс
   st.btns = [
@@ -386,6 +398,57 @@ export function drawChart(cv: HTMLCanvasElement, series: Series[], title: string
     cv.addEventListener('dblclick', () => {
       const s = stGet()
       if (s) { s.x0 = 0; s.x1 = NaN; redraw() }
+    })
+    // Тач: один палец — то же перетаскивание, что и мышь (общие поля dragPx/x0/x1);
+    // масштаб колесом на тач-устройствах не подменяем жестом — щипок не реализован,
+    // поэтому подсказка (см. renderChart) его и не обещает.
+    let touchStartX = 0
+    let touchOnButton = false
+    let touchMoved = false
+    let lastTouchTap = 0
+    cv.addEventListener('touchstart', (e) => {
+      const s = stGet()
+      if (!s || e.touches.length !== 1) return
+      const rect = cv.getBoundingClientRect()
+      const t = e.touches[0]
+      const mx = t.clientX - rect.left
+      const my = t.clientY - rect.top
+      touchStartX = mx
+      touchMoved = false
+      touchOnButton = s.btns.some((b) => mx >= b.x && mx <= b.x + b.w && my >= 6 && my <= 25)
+      if (!touchOnButton) s.dragPx = mx
+    }, { passive: true })
+    cv.addEventListener('touchmove', (e) => {
+      const s = stGet()
+      if (!s || s.dragPx === null || e.touches.length !== 1) return
+      e.preventDefault()
+      const rect = cv.getBoundingClientRect()
+      const mx = e.touches[0].clientX - rect.left
+      if (Math.abs(mx - touchStartX) > 4) touchMoved = true
+      const plotW = rect.width - CPAD.l - CPAD.r
+      const n = Math.max(...s.series.map((x) => x.data.length), 2)
+      const dIdx = ((mx - s.dragPx) / plotW) * (s.x1 - s.x0)
+      s.x0 += dIdx
+      s.x1 += dIdx
+      const width = s.x1 - s.x0
+      if (s.x0 < 0) { s.x0 = 0; s.x1 = width }
+      if (s.x1 > n - 1) { s.x1 = n - 1; s.x0 = n - 1 - width }
+      s.dragPx = mx
+      redraw()
+    }, { passive: false })
+    cv.addEventListener('touchend', () => {
+      const s = stGet()
+      if (s) s.dragPx = null
+      if (!s || touchMoved || touchOnButton) return
+      const now = Date.now()
+      if (now - lastTouchTap < 350) {
+        s.x0 = 0
+        s.x1 = NaN
+        redraw()
+        lastTouchTap = 0
+      } else {
+        lastTouchTap = now
+      }
     })
     cv.addEventListener('click', (e) => {
       const s = stGet()
