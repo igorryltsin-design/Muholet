@@ -6,7 +6,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import type { CamMode, FlyGenome, Frame, Scenario } from './types'
-import { perfBudget } from './perf'
+import { perfBudget, recordFrameMs } from './perf'
 import { buzz, HAPTIC } from './haptics'
 
 const KM = 0.001
@@ -394,7 +394,10 @@ export function EngagementView({
 
     const composer = new EffectComposer(renderer)
     composer.addPass(new RenderPass(scene, camera))
-    const bloom = new UnrealBloomPass(new THREE.Vector2(800, 600), THEME_NIGHT.bloom, 0.5, 0.85)
+    // сила bloom — по тиру устройства (perfBudget().bloomStrength, 0.5 на low): дешёвый
+    // пост-эффект держит GPU весь кадр, а не только в момент вспышки/искр
+    const bloomBudget = perfBudget().bloomStrength
+    const bloom = new UnrealBloomPass(new THREE.Vector2(800, 600), THEME_NIGHT.bloom * bloomBudget, 0.5, 0.85)
     composer.addPass(bloom)
 
     // ─── камера: авто-дистанция и перелёт при смене сценария ───
@@ -853,6 +856,11 @@ export function EngagementView({
     let smInit = false
     let smRInit = false
     let lastTickMs = performance.now()
+    // самокалибровка тира устройства: средний интервал первых 60 рендер-кадров
+    // оседает в localStorage (perf.ts::recordFrameMs) и учитывается со следующей сессии
+    let calibFrames = 0
+    let calibSumMs = 0
+    let calibDone = false
     let lastTrailStamp = -2
     let wasInRun = false
     let terminalCam = false
@@ -930,7 +938,7 @@ export function EngagementView({
       ;(killRing.material as THREE.LineBasicMaterial).color.set(T.y)
       lastKillR = -1 // форсируем перерисовку подписи круга БЧ новым цветом темы на следующем кадре
       tArrow.setColor(new THREE.Color(T.tgt))
-      bloom.strength = T.bloom
+      bloom.strength = T.bloom * bloomBudget
       swarmLines.forEach((s) => {
         const col = s.best
           ? new THREE.Color(T.swarmBest)
@@ -1045,7 +1053,16 @@ export function EngagementView({
       // телеметрия приходит реже, чем кадры рендера: экспоненциальное сглаживание
       // (τ≈70 мс) превращает ступеньки в непрерывный ход; на старте прогона — мгновенный щелчок
       const nowMs = performance.now()
-      const dtS = Math.min(0.1, Math.max(0.001, (nowMs - lastTickMs) / 1000))
+      const rawDtMs = nowMs - lastTickMs
+      if (!calibDone) {
+        calibSumMs += rawDtMs
+        calibFrames += 1
+        if (calibFrames >= 60) {
+          recordFrameMs(calibSumMs / calibFrames)
+          calibDone = true
+        }
+      }
+      const dtS = Math.min(0.1, Math.max(0.001, rawDtMs / 1000))
       lastTickMs = nowMs
       const kPos = 1 - Math.exp(-dtS / 0.07)
       const kRot = 1 - Math.exp(-dtS / 0.05)
