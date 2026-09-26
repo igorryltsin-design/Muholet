@@ -411,6 +411,10 @@ export function EngagementView({
     let recenterUntil = 0
     let interacting = false
     let lastInteract = -1e9
+    // ручное вращение во время прогона отдаёт камеру пользователю ДО конца
+    // прогона (не на 1.5с, как раньше) — иначе терминальный наезд отбирал её
+    // назад при первой же паузе в движении мыши, и покрутить сцену было нельзя
+    let userFreeUntilNextRun = false
 
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
@@ -426,6 +430,7 @@ export function EngagementView({
     controls.addEventListener('start', () => {
       interacting = true
       flight = false
+      userFreeUntilNextRun = true
     })
     controls.addEventListener('end', () => {
       interacting = false
@@ -1537,17 +1542,26 @@ export function EngagementView({
       target.visible = true
 
       // старт прогона (фронт «простой → полёт»): один раз перелетаем к пусковому ракурсу,
-      // дальше на маршевом участке камера стоит в мире неподвижно — см. ветку «авто»
+      // дальше на маршевом участке камера стоит в мире неподвижно — см. ветку «авто».
+      // Если пользователь как раз крутит камеру в этот момент, откладываем перелёт
+      // на следующий кадр (wasInRun не трогаем) — раньше при активном вращении переход
+      // терялся НАВСЕГДА, и новый прогон стартовал с камерой, застрявшей в терминальном
+      // кадре предыдущего (цель не попадала в кадр с самого начала)
       const inRun = Boolean(pb) || Boolean(fr && !idleRef.current)
-      if (inRun && !wasInRun && !interacting && nowMs - lastInteract > 800) {
-        const home = homeView(scRef.current)
-        flightPos.copy(home.pos)
-        flightTgt.copy(home.tgt)
-        flight = camRef.current !== 'chase'
-        userZoom = 1
-        terminalCam = false
+      if (inRun && !wasInRun) {
+        if (!interacting) {
+          const home = homeView(scRef.current)
+          flightPos.copy(home.pos)
+          flightTgt.copy(home.tgt)
+          flight = camRef.current !== 'chase'
+          userZoom = 1
+          terminalCam = false
+          userFreeUntilNextRun = false
+          wasInRun = true
+        }
+      } else {
+        wasInRun = inRun
       }
-      wasInRun = inRun
 
       const mid = mp.clone().lerp(tp, 0.42)
       const desired = pb ? swarmCenter : mid
@@ -1611,8 +1625,10 @@ export function EngagementView({
           // одиночный прогон, маршевый участок: камера ЗАФИКСИРОВАНА в мире.
           // Если она едет за парой и наезжает пропорционально сближению, пара всегда
           // занимает одну долю кадра — самолёт кажется стоящим относительно осей.
-          // Единственное исключение — терминальный участок: мягкий наезд на точку встречи
-          const manual = interacting || nowMs - lastInteract < 1500
+          // Единственное исключение — терминальный участок: мягкий наезд на точку встречи.
+          // Ручное вращение отдаёт камеру пользователю ДО КОНЦА прогона (не на 1.5с) —
+          // правило «ручное вращение → свободная камера», а не временная уступка
+          const manual = interacting || userFreeUntilNextRun
           // манёвренная цель — камера приходит раньше: уклонение должно быть видно
           const evasive = sc.maneuver !== 'straight' && sc.n_target > 0
           // второе условие — по времени до встречи (R/Vсбл), а не только по дистанции:
