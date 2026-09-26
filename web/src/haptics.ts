@@ -21,10 +21,12 @@ function reducedMotion(): boolean {
   }
 }
 
-export function buzz(pattern: number | number[]) {
+export function buzz(pattern: number | readonly number[]) {
   if (!userEnabled || reducedMotion()) return
   try {
-    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate(pattern)
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      navigator.vibrate(typeof pattern === 'number' ? pattern : [...pattern])
+    }
   } catch {
     /* устройство отклонило запрос — не критично */
   }

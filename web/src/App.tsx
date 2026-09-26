@@ -13,6 +13,8 @@ import { planWendy, type WendyLine, type WendyPlan } from './wendy'
 import { royLine, type RoyKey } from './roy'
 import { exportCsv } from './lab/charts'
 import { resetLayout } from './ui'
+import { perfBudget } from './perf'
+import { buzz, HAPTIC } from './haptics'
 import { AppShell } from './shell/AppShell'
 import type { Workspace } from './shell/TopBar'
 import { FlightWorkspace } from './shell/FlightWorkspace'
@@ -614,6 +616,9 @@ export function App() {
   const clearLog = () => setLog([])
   const stop = useRef(false)
   const lastFramesRef = useRef<Frame[]>([])
+  // счётчик пуска: инстант-реплей планируется с задержкой (500мс) — если за это время
+  // начался новый пуск, устаревший реплей не должен перекрыть его свежий playback
+  const runIdRef = useRef(0)
   const swarmStop = useRef(false)
   const populationRef = useRef<FlyGenome[] | null>(null)
 
@@ -794,7 +799,9 @@ export function App() {
     const sum = typeof summary === 'function' ? summary() : summary
     if (sum) {
       const got = typeof hit === 'function' ? hit() : hit
-      say(got ?? sum.startsWith('Перехват') ? 'hit' : 'miss')
+      const gotHit = got ?? sum.startsWith('Перехват')
+      say(gotHit ? 'hit' : 'miss')
+      buzz(gotHit ? HAPTIC.hit : HAPTIC.miss)
       setDone(sum)
     }
     const finalPlan = shtrum ?? live?.shtrum() ?? null
@@ -890,19 +897,51 @@ export function App() {
       setLog((rows) => [`Свободная расстановка: до цели ${(d / 1000).toFixed(0)} км — даже на встречных курсах сближение ≥ ${(tMin / 60).toFixed(1)} мин, а окно счёта ${sc.t_max} с: перехват не успевает (граница расчёта, не физика)`, ...rows].slice(0, 14))
   }
 
+  /** Честный замедленный повтор финала: тот же Playback-механизм, что у showDuelReplay —
+   *  хвост реальных кадров последних ~1.5с, показан медленнее (данные те же, просто темп
+   *  ниже). Только «Полёт», только перехват, не дуэль/рой, не под активной озвучкой —
+   *  не спорит с уже идущими фразами штурмана. Пропускается на слабом тире устройства и
+   *  при prefers-reduced-motion. myRunId — если за 500мс паузы начался новый пуск,
+   *  устаревший повтор не перекрывает его свежий playback. */
+  const maybeInstantReplay = (myRunId: number, frames: Frame[], hit: boolean | null, isDuel: boolean) => {
+    if (ws !== 'flight' || !hit || isDuel || soundOn || frames.length < 2) return
+    if (!perfBudget().allowCinematicReplay) return
+    try {
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    } catch {
+      /* приватный режим/старый браузер — просто не пропускаем через это условие */
+    }
+    const tEnd = frames[frames.length - 1].t
+    const tail = frames.filter((fr) => fr.t >= tEnd - 1.5)
+    if (tail.length < 2) return
+    const traj_m = tail.map((fr) => fr.missile)
+    const traj_t = tail.map((fr) => fr.target)
+    const windowMs = Math.max(1, (tail[tail.length - 1].t - tail[0].t) * 1000)
+    const durationMs = Math.max(2000, Math.min(6000, windowMs * 3.5))
+    window.setTimeout(() => {
+      if (runIdRef.current !== myRunId) return // новый пуск уже начался — не перекрываем его
+      setSceneBadge('Повтор · ×3.5 замедление')
+      setPlayback({ results: [{ traj_m, traj_t, fitness: 0, hit: true }], bestIdx: 0, startedAt: performance.now(), durationMs, cinematic: true })
+    }, 500)
+  }
+
   /** Потоковый прогон по /api/ws/run: движение начинается, когда прилетели
    *  первые ~0,5 с траектории, а сервер ещё доинтегрирует хвост (вся пауза
    *  «Пуск → кадр» была в полном ожидании POST-ответа, 3–6 с). Метрики
    *  догоняют игру сообщением 'done' — вердикт, лаборатория и реплики
    *  штурмана встают по ним. false — коннект/старт не удался до первого
    *  кадра: run() пересчитает прежним POST (в том числе офлайн-локалом). */
-  const streamRun = async (body: Record<string, unknown>, he: boolean, flown: Scenario = sc): Promise<boolean> => {
+  const streamRun = async (
+    body: Record<string, unknown>,
+    he: boolean,
+    flown: Scenario = sc,
+  ): Promise<{ ok: boolean; frames: Frame[]; hit: boolean | null; duel: boolean }> => {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     let ws: WebSocket
     try {
       ws = new WebSocket(`${proto}://${location.host}/api/ws/run`)
     } catch {
-      return false
+      return { ok: false, frames: [], hit: null, duel: false }
     }
     const frames: Frame[] = []
     let answer: Record<string, unknown> & { frames?: Frame[] } | null = null
@@ -911,6 +950,7 @@ export function App() {
     let plan: ShtrumPlan | null = null
     let wendyPlan: WendyPlan | null = null
     let hitFinal: boolean | null = null
+    let isDuelFinal = false
     const finalize = () => {
       if (!answer) return
       lastFramesRef.current = frames
@@ -920,6 +960,7 @@ export function App() {
       const m = recordRun(frames, answer as unknown as Parameters<typeof recordRun>[1] | undefined)
       hitFinal = m.hit
       logFreeWindow(m)
+      isDuelFinal = Boolean(answer.duel)
       const duelInfo = answer.duel
         ? { result: (answer.duel_result as 'missile' | 'evader' | null) ?? null, tSurvived: (answer.t_survived as number | null) ?? null, fuse: Boolean(answer.fuse_expired) }
         : null
@@ -975,7 +1016,7 @@ export function App() {
       } catch {
         /* уже закрыт */
       }
-      return false
+      return { ok: false, frames, hit: null, duel: false }
     }
     await playFrames(frames, () => summary, undefined, null, he, {
       done: () => finished,
@@ -987,13 +1028,14 @@ export function App() {
     } catch {
       /* уже закрыт */
     }
-    return true
+    return { ok: true, frames, hit: hitFinal, duel: isDuelFinal }
   }
 
   // patch — явная надбавка к сценарию для запуска «прямо сейчас» из дуэльного
   // космоса: setState ещё не подействовал, а дрессированный дуэт хочется
   // летящим в этом же клике (Красная королева: «Дуэль чемпионов», «Повторить бой»)
   const run = async (patch?: Partial<Scenario>) => {
+    const myRunId = ++runIdRef.current
     const s = patch ? ({ ...sc, ...patch } as Scenario) : sc
     stop.current = true
     await new Promise((r) => setTimeout(r, 40))
@@ -1022,10 +1064,12 @@ export function App() {
     // если стрим не задался до первого кадра — прежний полный POST ниже
     let streamed = false
     try {
-      streamed = await streamRun({ ...s, brain: s.brain }, he, s)
+      const r = await streamRun({ ...s, brain: s.brain }, he, s)
+      streamed = r.ok
       if (streamed) {
         saveLab()
         labTick()
+        maybeInstantReplay(myRunId, r.frames, r.hit, r.duel)
       }
     } catch {
       streamed = false // любое падение стрима — пересчитываем прежним путём
@@ -1086,6 +1130,7 @@ export function App() {
         )
         saveLab()
         labTick()
+        maybeInstantReplay(myRunId, frames, m.hit, Boolean(duelInfo))
         return
       }
       throw new Error(`сервер ${res.status}`)
@@ -1101,6 +1146,7 @@ export function App() {
       await playFrames(frames, summaryOf(m), undefined, humorOn ? planShtrum(frames, m, s, he) : null, he, undefined, m.hit)
       saveLab()
       labTick()
+      maybeInstantReplay(myRunId, frames, m.hit, false)
     } finally {
       setBusy(false)
     }

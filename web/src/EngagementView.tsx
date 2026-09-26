@@ -7,6 +7,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import type { CamMode, FlyGenome, Frame, Scenario } from './types'
 import { perfBudget } from './perf'
+import { buzz, HAPTIC } from './haptics'
 
 const KM = 0.001
 
@@ -74,6 +75,9 @@ export type Playback = {
   /** подпись над веером траекторий: по умолчанию «рой · N мух», у учебного боя
    *  дуэли своя («школа · поколение 3 · tpn») — подписывать её роем было бы неверно */
   caption?: string
+  /** инстант-реплей перехвата: те же данные хвоста прогона, просто медленнее показаны —
+   *  камера плавно облетает точку удара вместо обычного «веера роя/дуэли» поведения */
+  cinematic?: boolean
 }
 
 /** Палитры 3D-сцены: ночь (фосфор) и день (пасмурное небо, тёмные метки). */
@@ -731,6 +735,7 @@ export function EngagementView({
       controls.enabled = false
       renderer.domElement.setPointerCapture(e.pointerId)
       renderer.domElement.style.cursor = 'grabbing'
+      buzz(HAPTIC.grab)
       e.stopPropagation()
     }
     const grabMove = (e: PointerEvent) => {
@@ -1568,6 +1573,17 @@ export function EngagementView({
             camera.position.lerp(wantPos, 0.08)
             controls.target.lerp(wantTgt, 0.12)
           }
+        } else if (pb?.cinematic) {
+          // инстант-реплей перехвата: неполный (~1.15π) облёт точки удара — те же данные,
+          // просто медленнее и с новым ракурсом; первое касание/вращение отменяет облёт
+          // так же, как обычную «авто»-камеру (interacting уже общий для всех веток)
+          const manual = interacting || nowMs - lastInteract < 1500
+          if (!manual) {
+            const angle = prog * Math.PI * 1.15
+            const dist = Math.max(1.2, sepRaw * 2.6, spanBase * 0.05)
+            camera.position.set(mid.x + Math.cos(angle) * dist, mid.y + dist * 0.3, mid.z + Math.sin(angle) * dist)
+          }
+          controls.target.lerp(mid, 0.15)
         } else if (flight) {
           // перелёт к пусковому ракурсу сценария или нового прогона
           controls.target.lerp(flightTgt, 0.05)
