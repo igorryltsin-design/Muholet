@@ -6,12 +6,51 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import type { CamMode, FlyGenome, Frame, Scenario } from './types'
+import { perfBudget, recordFrameMs } from './perf'
+import { buzz, HAPTIC } from './haptics'
 
 const KM = 0.001
 
 /** СК симулятора → мир three.js: X — дальность, Y (мир) — высота, Z (мир) — бок. */
 function to3(p: number[]) {
   return new THREE.Vector3(p[0] * KM, p[2] * KM, p[1] * KM)
+}
+
+/** Точка следа с реальной нагрузкой в момент прохода: 0 — спокойно, 1 — на пределе. */
+type TrailPoint = { p: THREE.Vector3; g: number }
+
+/** Единичная окружность в локальных координатах — круг БЧ масштабируется/двигается, не перестраивается. */
+function unitCircleGeometry(segments = 40) {
+  const pts: THREE.Vector3[] = []
+  for (let i = 0; i < segments; i += 1) {
+    const a = (i / segments) * Math.PI * 2
+    pts.push(new THREE.Vector3(Math.cos(a), Math.sin(a), 0))
+  }
+  return new THREE.BufferGeometry().setFromPoints(pts) // LineLoop замыкает последнюю точку на первую сама
+}
+
+/** Перестраивает геометрию линии следа с цветом по вершинам (градиент «спокойно → на пределе»).
+ * Полный ребилд на ~25 Гц телеметрии для ≤260 точек — дешевле, чем аккуратный incremental-update. */
+function setTrailGeometry(line: THREE.Line, trail: TrailPoint[], cold: THREE.Color, hot: THREE.Color) {
+  const n = trail.length
+  const pos = new Float32Array(n * 3)
+  const col = new Float32Array(n * 3)
+  const c = new THREE.Color()
+  for (let i = 0; i < n; i += 1) {
+    const { p, g } = trail[i]
+    pos[i * 3] = p.x
+    pos[i * 3 + 1] = p.y
+    pos[i * 3 + 2] = p.z
+    c.copy(cold).lerp(hot, Math.max(0, Math.min(1, g)))
+    col[i * 3] = c.r
+    col[i * 3 + 1] = c.g
+    col[i * 3 + 2] = c.b
+  }
+  line.geometry.dispose()
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3))
+  line.geometry = geo
 }
 
 export type Playback = {
@@ -36,6 +75,9 @@ export type Playback = {
   /** подпись над веером траекторий: по умолчанию «рой · N мух», у учебного боя
    *  дуэли своя («школа · поколение 3 · tpn») — подписывать её роем было бы неверно */
   caption?: string
+  /** инстант-реплей перехвата: те же данные хвоста прогона, просто медленнее показаны —
+   *  камера плавно облетает точку удара вместо обычного «веера роя/дуэли» поведения */
+  cinematic?: boolean
 }
 
 /** Палитры 3D-сцены: ночь (фосфор) и день (пасмурное небо, тёмные метки). */
@@ -54,6 +96,9 @@ const THEME_NIGHT = {
   los: 0xe7c15a,
   mLine: 0x7dffc8,
   tLine: 0xff7a55,
+  // «горячий» конец градиента трассы при полной перегрузке (n_req/n_lim = 1)
+  mLineHot: 0xff7a5e,
+  tLineHot: 0xff3b2f,
   req: 0x7dffc8,
   tgt: 0xff7a55,
   zem: 0xe7c15a,
@@ -78,6 +123,8 @@ const THEME_DAY = {
   los: 0x8a6a1a,
   mLine: 0x0a6a4e,
   tLine: 0xb03a22,
+  mLineHot: 0xb3301c,
+  tLineHot: 0x7a1810,
   req: 0x0a6a4e,
   tgt: 0xb03a22,
   zem: 0x8a6a1a,
@@ -347,7 +394,10 @@ export function EngagementView({
 
     const composer = new EffectComposer(renderer)
     composer.addPass(new RenderPass(scene, camera))
-    const bloom = new UnrealBloomPass(new THREE.Vector2(800, 600), THEME_NIGHT.bloom, 0.5, 0.85)
+    // сила bloom — по тиру устройства (perfBudget().bloomStrength, 0.5 на low): дешёвый
+    // пост-эффект держит GPU весь кадр, а не только в момент вспышки/искр
+    const bloomBudget = perfBudget().bloomStrength
+    const bloom = new UnrealBloomPass(new THREE.Vector2(800, 600), THEME_NIGHT.bloom * bloomBudget, 0.5, 0.85)
     composer.addPass(bloom)
 
     // ─── камера: авто-дистанция и перелёт при смене сценария ───
@@ -650,6 +700,21 @@ export function EngagementView({
       if (m.isMesh) jetParts.push({ mesh: m, home: m.position.clone(), homeRot: m.rotation.clone(), vel: new THREE.Vector3(), spin: new THREE.Vector3() })
     })
     const jetMats = (target.userData.mats ?? []) as THREE.MeshStandardMaterial[]
+    // базовая яркость материалов — чтобы короткую вспышку подрыва можно было отпустить обратно
+    const jetMatsBaseEmissive = jetMats.map((m) => m.emissiveIntensity)
+
+    // искры при подрыве: короткий Points-всплеск с тем же затуханием, что у обломков
+    // (age 0…1.1с), число частиц — по тиру устройства (perfBudget().sparkCount, 0 на low)
+    const SPARK_MAX = 18
+    const sparkPos = new Float32Array(SPARK_MAX * 3)
+    const sparkGeo = new THREE.BufferGeometry()
+    sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3).setUsage(THREE.DynamicDrawUsage))
+    const sparkMat = new THREE.PointsMaterial({ color: 0xffe0a0, size: 0.045, transparent: true, opacity: 0, depthWrite: false })
+    const sparks = new THREE.Points(sparkGeo, sparkMat)
+    sparks.visible = false
+    scene.add(sparks)
+    const sparkVel: THREE.Vector3[] = Array.from({ length: SPARK_MAX }, () => new THREE.Vector3())
+    let activeSparks = 0
 
     // ── ручная расстановка прямо в сцене (аспект free, до прогона) ──
     // тяга цели: по горизонтальной плоскости её высоты — X/Y; с зажатым Shift — вертикально, высота.
@@ -673,6 +738,7 @@ export function EngagementView({
       controls.enabled = false
       renderer.domElement.setPointerCapture(e.pointerId)
       renderer.domElement.style.cursor = 'grabbing'
+      buzz(HAPTIC.grab)
       e.stopPropagation()
     }
     const grabMove = (e: PointerEvent) => {
@@ -716,8 +782,9 @@ export function EngagementView({
 
     const los = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: THEME_NIGHT.los, dashSize: 0.25, gapSize: 0.12 }))
     scene.add(los)
-    const mLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: THEME_NIGHT.mLine }))
-    const tLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: THEME_NIGHT.tLine }))
+    // цвет следа — по вершинам (см. setTrailGeometry): материал держит белый, чтобы не искажать градиент
+    const mLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffffff, vertexColors: true }))
+    const tLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffffff, vertexColors: true }))
     scene.add(mLine, tLine)
 
     // ─── геометрия наведения ───
@@ -726,7 +793,12 @@ export function EngagementView({
     const reqLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: THEME_NIGHT.req, transparent: true, opacity: 0.9 }))
     const tgtToPip = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: THEME_NIGHT.tgt, dashSize: 0.1, gapSize: 0.06, transparent: true, opacity: 0.8 }))
     const aArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0.5, THEME_NIGHT.arrow, 0.1, 0.05)
-    geoGroup.add(reqLine, tgtToPip, aArrow)
+    // круг реального радиуса срабатывания БЧ (sc.kill_radius_m) — только у настоящей позиции
+    // цели, только в режиме «геометрия»; не декоративное кольцо у прогнозной точки
+    const killRing = new THREE.LineLoop(unitCircleGeometry(40), new THREE.LineBasicMaterial({ color: THEME_NIGHT.y, transparent: true, opacity: 0.8 }))
+    let lastKillR = -1
+    const killLabel = makeLabel('', THEME_NIGHT.y, 0.55)
+    geoGroup.add(reqLine, tgtToPip, aArrow, killRing, killLabel.spr)
     // стрелка перегрузки цели: куда самолёт тянет манёвр. Живёт вне geo-режима —
     // манёвр должен быть виден в любом режиме камеры и панелей
     const tArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0.5, THEME_NIGHT.tgt, 0.12, 0.06)
@@ -745,8 +817,10 @@ export function EngagementView({
     const swarmCenter = new THREE.Vector3()
     let swarmSpan = 0 // размах веера траекторий роя
 
-    let mTrail: THREE.Vector3[] = []
-    let tTrail: THREE.Vector3[] = []
+    let mTrail: TrailPoint[] = []
+    let tTrail: TrailPoint[] = []
+    const trailCold = new THREE.Color()
+    const trailHot = new THREE.Color()
     let modelScale = 0.75
     let effScale = 0.75 // сглаженный текущий масштаб (в терминальной фазе уменьшается)
     const missLabel = makeLabel('промах', '#ff6a4a', 0.5)
@@ -782,6 +856,11 @@ export function EngagementView({
     let smInit = false
     let smRInit = false
     let lastTickMs = performance.now()
+    // самокалибровка тира устройства: средний интервал первых 60 рендер-кадров
+    // оседает в localStorage (perf.ts::recordFrameMs) и учитывается со следующей сессии
+    let calibFrames = 0
+    let calibSumMs = 0
+    let calibDone = false
     let lastTrailStamp = -2
     let wasInRun = false
     let terminalCam = false
@@ -849,13 +928,17 @@ export function EngagementView({
       labYl.set(T.y)
       labZl.set(T.z)
       ;(los.material as THREE.LineDashedMaterial).color.set(T.los)
-      ;(mLine.material as THREE.LineBasicMaterial).color.set(T.mLine)
-      ;(tLine.material as THREE.LineBasicMaterial).color.set(T.tLine)
+      // mLine/tLine: цвет по вершинам (см. setTrailGeometry) — материал остаётся белым,
+      // новая тема подхватывается следующим пушем точки, старый след не перекрашивается
+      if (mTrail.length > 1) setTrailGeometry(mLine, mTrail, trailCold.set(T.mLine), trailHot.set(T.mLineHot))
+      if (tTrail.length > 1) setTrailGeometry(tLine, tTrail, trailCold.set(T.tLine), trailHot.set(T.tLineHot))
       ;(reqLine.material as THREE.LineBasicMaterial).color.set(T.req)
       ;(tgtToPip.material as THREE.LineDashedMaterial).color.set(T.tgt)
       aArrow.setColor(new THREE.Color(T.arrow))
+      ;(killRing.material as THREE.LineBasicMaterial).color.set(T.y)
+      lastKillR = -1 // форсируем перерисовку подписи круга БЧ новым цветом темы на следующем кадре
       tArrow.setColor(new THREE.Color(T.tgt))
-      bloom.strength = T.bloom
+      bloom.strength = T.bloom * bloomBudget
       swarmLines.forEach((s) => {
         const col = s.best
           ? new THREE.Color(T.swarmBest)
@@ -970,7 +1053,16 @@ export function EngagementView({
       // телеметрия приходит реже, чем кадры рендера: экспоненциальное сглаживание
       // (τ≈70 мс) превращает ступеньки в непрерывный ход; на старте прогона — мгновенный щелчок
       const nowMs = performance.now()
-      const dtS = Math.min(0.1, Math.max(0.001, (nowMs - lastTickMs) / 1000))
+      const rawDtMs = nowMs - lastTickMs
+      if (!calibDone) {
+        calibSumMs += rawDtMs
+        calibFrames += 1
+        if (calibFrames >= 60) {
+          recordFrameMs(calibSumMs / calibFrames)
+          calibDone = true
+        }
+      }
+      const dtS = Math.min(0.1, Math.max(0.001, rawDtMs / 1000))
       lastTickMs = nowMs
       const kPos = 1 - Math.exp(-dtS / 0.07)
       const kRot = 1 - Math.exp(-dtS / 0.05)
@@ -1231,6 +1323,15 @@ export function EngagementView({
         tgtToPip.geometry.setFromPoints([tp, pip])
         ;(tgtToPip.material as THREE.LineDashedMaterial).needsUpdate = true
         tgtToPip.computeLineDistances()
+        // круг БЧ: реальный радиус sc.kill_radius_m, у текущей позиции цели, лицом к камере
+        killRing.position.copy(tp)
+        killRing.scale.setScalar(Math.max(1e-4, sc.kill_radius_m * KM))
+        killRing.quaternion.copy(camera.quaternion)
+        if (sc.kill_radius_m !== lastKillR) {
+          lastKillR = sc.kill_radius_m
+          killLabel.set(dayRef.current ? THEME_DAY.y : THEME_NIGHT.y, `БЧ R ${Math.round(sc.kill_radius_m)} м`)
+        }
+        killLabel.spr.position.copy(tp).add(new THREE.Vector3(0, sc.kill_radius_m * KM * 1.15, 0))
         if (aCmd && aCmd.lengthSq() > 1e-9) {
           aArrow.visible = true
           aArrow.position.copy(mp)
@@ -1340,12 +1441,19 @@ export function EngagementView({
       // иначе след «съедается» одинаковыми точками в два раза быстрее
       if (!pb && fr && intro > 0.35 && stamp !== lastTrailStamp) {
         lastTrailStamp = stamp
-        mTrail.push(mp.clone())
-        tTrail.push(tp.clone())
-        if (mTrail.length > 260) mTrail.shift()
-        if (tTrail.length > 260) tTrail.shift()
-        if (mTrail.length > 1) mLine.geometry.setFromPoints(mTrail)
-        if (tTrail.length > 1) tLine.geometry.setFromPoints(tTrail)
+        // ракета: реальная доля выработанной перегрузки; цель: кинематическая оценка
+        // манёвра (smTa уже используется для крена/стрелки цели выше) — честно
+        // помечено как оценка в подсказке чипа «геометрия», не точный замер
+        const gM = Math.max(0, Math.min(1, fr.n_req / Math.max(1, fr.n_lim)))
+        const gT = Math.max(0, Math.min(1, smTa.length() / (G_KM * Math.max(sc.n_target, 1))))
+        mTrail.push({ p: mp.clone(), g: gM })
+        tTrail.push({ p: tp.clone(), g: gT })
+        const cap = perfBudget().trailPoints
+        if (mTrail.length > cap) mTrail.shift()
+        if (tTrail.length > cap) tTrail.shift()
+        const T = dayRef.current ? THEME_DAY : THEME_NIGHT
+        if (mTrail.length > 1) setTrailGeometry(mLine, mTrail, trailCold.set(T.mLine), trailHot.set(T.mLineHot))
+        if (tTrail.length > 1) setTrailGeometry(tLine, tTrail, trailCold.set(T.tLine), trailHot.set(T.tLineHot))
       }
 
       // перехват: ракета дошла до цели; самолёт без вспышки разлетается на части
@@ -1374,11 +1482,33 @@ export function EngagementView({
           )
           p.spin.set((partRng() - 0.5) * 7, (partRng() - 0.5) * 7, (partRng() - 0.5) * 7)
         })
+        // искры: короткий Points-всплеск от эпицентра, число — по тиру устройства
+        activeSparks = perfBudget().sparkCount
+        for (let i = 0; i < SPARK_MAX; i += 1) {
+          if (i < activeSparks) {
+            const dir = new THREE.Vector3(partRng() - 0.5, 0.25 + partRng() * 0.65, partRng() - 0.5).normalize()
+            sparkVel[i].copy(dir).multiplyScalar(0.9 + partRng() * 1.4)
+            sparkPos[i * 3] = mid.x
+            sparkPos[i * 3 + 1] = mid.y
+            sparkPos[i * 3 + 2] = mid.z
+          } else {
+            sparkPos[i * 3] = mid.x
+            sparkPos[i * 3 + 1] = mid.y
+            sparkPos[i * 3 + 2] = mid.z
+          }
+        }
+        sparkGeo.attributes.position.needsUpdate = true
+        sparks.visible = activeSparks > 0
       }
-      if (!hit) wasHit = false
+      if (!hit) {
+        wasHit = false
+        sparks.visible = false
+      }
       missile.visible = !hit
       if (hit) {
-        // разлёт: кувырки и гравитация, части плавно гаснут
+        // разлёт: кувырки и гравитация, части плавно гаснут; короткая (120-160мс) вспышка
+        // на материалах обломков — подхватывается существующим UnrealBloomPass, никакого
+        // нового полноэкранного слоя/света. HUD — DOM над canvas, вспышка его не перекрывает
         const age = (performance.now() - hitAt) / 1000
         const dts = 0.016
         jetParts.forEach((p) => {
@@ -1388,7 +1518,21 @@ export function EngagementView({
           p.mesh.rotation.y += p.spin.y * dts
           p.mesh.rotation.z += p.spin.z * dts
         })
-        jetMats.forEach((m) => (m.opacity = Math.max(0, Math.min(1, 1 - Math.max(0, age - 1.0) / 1.3))))
+        const flash = Math.max(0, 1 - age / 0.14)
+        jetMats.forEach((m, i) => {
+          m.opacity = Math.max(0, Math.min(1, 1 - Math.max(0, age - 1.0) / 1.3))
+          m.emissiveIntensity = jetMatsBaseEmissive[i] + flash * 2.4
+        })
+        if (activeSparks > 0) {
+          for (let i = 0; i < activeSparks; i += 1) {
+            sparkVel[i].y -= 0.6 * dts
+            sparkPos[i * 3] += sparkVel[i].x * dts
+            sparkPos[i * 3 + 1] += sparkVel[i].y * dts
+            sparkPos[i * 3 + 2] += sparkVel[i].z * dts
+          }
+          sparkGeo.attributes.position.needsUpdate = true
+          sparkMat.opacity = Math.max(0, 1 - age / 1.1)
+        }
       }
       target.visible = true
 
@@ -1446,6 +1590,17 @@ export function EngagementView({
             camera.position.lerp(wantPos, 0.08)
             controls.target.lerp(wantTgt, 0.12)
           }
+        } else if (pb?.cinematic) {
+          // инстант-реплей перехвата: неполный (~1.15π) облёт точки удара — те же данные,
+          // просто медленнее и с новым ракурсом; первое касание/вращение отменяет облёт
+          // так же, как обычную «авто»-камеру (interacting уже общий для всех веток)
+          const manual = interacting || nowMs - lastInteract < 1500
+          if (!manual) {
+            const angle = prog * Math.PI * 1.15
+            const dist = Math.max(1.2, sepRaw * 2.6, spanBase * 0.05)
+            camera.position.set(mid.x + Math.cos(angle) * dist, mid.y + dist * 0.3, mid.z + Math.sin(angle) * dist)
+          }
+          controls.target.lerp(mid, 0.15)
         } else if (flight) {
           // перелёт к пусковому ракурсу сценария или нового прогона
           controls.target.lerp(flightTgt, 0.05)
@@ -1460,7 +1615,11 @@ export function EngagementView({
           const manual = interacting || nowMs - lastInteract < 1500
           // манёвренная цель — камера приходит раньше: уклонение должно быть видно
           const evasive = sc.maneuver !== 'straight' && sc.n_target > 0
-          if (sepRaw < Math.max(1.2, spanBase * (evasive ? 0.45 : 0.3))) terminalCam = true
+          // второе условие — по времени до встречи (R/Vсбл), а не только по дистанции:
+          // терминальный наезд гарантированно укладывается в последние ~1.6с, а не во всю
+          // дистанцию. tRadial офлайн-фолбэк (localSim.ts) не считает — обязателен fallback на tgo
+          const tGoNow = fr.tRadial ?? fr.tgo
+          if (sepRaw < Math.max(1.2, spanBase * (evasive ? 0.45 : 0.3)) || (tGoNow !== null && tGoNow < 1.6)) terminalCam = true
           if (terminalCam && !manual) {
             controls.target.lerp(mid, 0.08)
             const dist = camera.position.distanceTo(controls.target)
@@ -1492,10 +1651,25 @@ export function EngagementView({
     }
     raf = requestAnimationFrame(tick)
 
+    // скрытая вкладка: rAF не крутится вхолостую — все тайминги завязаны на
+    // performance.now() напрямую (hitAt/age, pb.startedAt, lastInteract), так
+    // что пауза не требует пересчёта состояния при возврате
+    const onVisibility = () => {
+      if (document.hidden) cancelAnimationFrame(raf)
+      else raf = requestAnimationFrame(tick)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
       cancelAnimationFrame(raf)
       missLabel.spr.removeFromParent()
       distLabel.spr.removeFromParent()
+      killLabel.spr.removeFromParent()
+      killRing.geometry.dispose()
+      ;(killRing.material as THREE.Material).dispose()
+      sparkGeo.dispose()
+      sparkMat.dispose()
       ro.disconnect()
       disposeSwarm()
       controls.dispose()

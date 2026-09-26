@@ -160,6 +160,7 @@ export function ParamsScreen({
   smooth,
   showFact,
   onLabCfg,
+  serverOnline,
 }: {
   tune: { pool: number; channels: number }
   onTune: (patch: { pool?: number; channels?: number }) => void
@@ -177,7 +178,9 @@ export function ParamsScreen({
   smooth: number
   showFact: boolean
   onLabCfg: (patch: Partial<{ smooth: number; showFact: boolean }>) => void
+  serverOnline: boolean | null
 }) {
+  const offline = serverOnline === false
   return (
     <LabScreen
       title="Параметры"
@@ -218,9 +221,14 @@ export function ParamsScreen({
             >
               <option value="scratch">с нуля</option>
               <option value="finetune">дообучение</option>
-              <option value="result">по результату (довести до попадания)</option>
+              <option value="result" disabled={offline}>
+                по результату (довести до попадания){offline ? ' — только на стенде' : ''}
+              </option>
             </select>
           </label>
+          {offline && trainCfg.mode === 'result' && (
+            <p className="lab-hint">Доводка по результату считается только на стенде — сейчас сервер недоступен. Выбран режим «по результату», но запуск обучения не сработает, пока стенд не поднимется.</p>
+          )}
           <label>
             Шаг обучения
             <input type="number" step={0.005} min={0.001} max={0.2} value={trainCfg.lr} onChange={(e) => onTrainCfg({ lr: Math.max(0.001, Number(e.target.value) || 0.04) })} />

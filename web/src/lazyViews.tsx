@@ -1,4 +1,5 @@
 import { lazy, Suspense, type ComponentProps } from 'react'
+import { Viewport3DSkeleton } from './shell/Viewport3DSkeleton'
 
 /**
  * Ленивые 3D-вьюхи: three.js — самая тяжёлая часть бандла, поэтому она живёт
@@ -11,7 +12,7 @@ const EngagementViewImpl = lazy(() => import('./EngagementView').then((m) => ({ 
 
 export function EngagementView(props: ComponentProps<typeof EngagementViewImpl>) {
   return (
-    <Suspense fallback={<div className="viewport viewport--3d" aria-hidden="true" />}>
+    <Suspense fallback={<Viewport3DSkeleton />}>
       <EngagementViewImpl {...props} />
     </Suspense>
   )
@@ -21,7 +22,7 @@ const Brain3DViewImpl = lazy(() => import('./Brain3DView').then((m) => ({ defaul
 
 export function Brain3DView(props: ComponentProps<typeof Brain3DViewImpl>) {
   return (
-    <Suspense fallback={<div className="viewport viewport--3d" aria-hidden="true" />}>
+    <Suspense fallback={<Viewport3DSkeleton />}>
       <Brain3DViewImpl {...props} />
     </Suspense>
   )

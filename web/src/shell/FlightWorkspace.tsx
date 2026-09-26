@@ -4,6 +4,7 @@ import { ScenarioInspector } from './ScenarioInspector'
 import { FreeGeometryEditor } from './FreeGeometryEditor'
 import { TelemetryBar, TelemetryDrawer } from './TelemetryBar'
 import { ASPECT_LABEL, LAW_RU, MODE_LABEL, fmt } from './labels'
+import { useTweenedNumber } from '../useTween'
 import type { CamMode, Frame, Scenario } from '../types'
 
 /** Рабочее пространство «Полёт»: сцена + контекстный инспектор + полоса телеметрии. */
@@ -63,6 +64,7 @@ export function FlightWorkspace({
   const [telOpen, setTelOpen] = useState(false)
   // крупный редактор расстановки — плавающей панелью поверх сцены (в колонке инспектора он мелок)
   const [freeOpen, setFreeOpen] = useState(true)
+  const tHud = useTweenedNumber(frame?.t ?? 0)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -127,18 +129,18 @@ export function FlightWorkspace({
                 {frame?.lock ? 'захват' : 'поиск'}
               </span>
               <span className="chip num" data-tip="Время от пуска.">
-                t = {fmt(frame?.t ?? 0, 2)} с
+                t = {fmt(tHud, 2)} с
               </span>
             </div>
 
-            <div className="scene-overlay scene-overlay--topright">
+            <div className="scene-overlay scene-overlay--topright" data-tour="camera">
               {statusText && <span className={`chip scene-status ${statusKind ? (statusKind === 'is-ok' ? 'is-ok' : 'is-bad') : ''}`}>{statusText}</span>}
               <select value={camMode} data-tip="Режим камеры: авто следит за серединой «ракета—цель»; свободная — под вашим управлением; вдогон — вид из-за ракеты. Двойной клик по сцене — вернуть взгляд." onChange={(e) => onCamMode(e.target.value as CamMode)}>
                 <option value="auto">камера: авто</option>
                 <option value="free">камера: свободная</option>
                 <option value="chase">камера: вдогон</option>
               </select>
-              <button type="button" className={geometryOn ? 'on' : ''} data-tip="Треугольник перехвата, круг БЧ, вектор команды и ожидаемый промах прямо на сцене." onClick={onToggleGeometry}>
+              <button type="button" className={geometryOn ? 'on' : ''} data-tip="Треугольник перехвата, круг БЧ, вектор команды и ожидаемый промах прямо на сцене. Цвет следа виден всегда: перегрузка ракеты (n_req/n_lim) и оценка манёвра цели." onClick={onToggleGeometry}>
                 геометрия
               </button>
               {sc.aspect === 'free' && (

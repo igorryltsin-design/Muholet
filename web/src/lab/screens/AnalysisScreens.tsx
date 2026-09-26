@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { CHART, download, drawChart, drawHist, exportCsv, palette, pearson, pctSorted, useAutoRedraw } from '../charts'
 import { LabScreen } from '../LabScreen'
+import { ServerOnlyBadge } from '../ServerOnlyBadge'
 import type { AblationData, CaptureZoneData, CoevData, CmpRow, DistillData, FaultsData, LadderData, MonteCarloData } from '../types'
 import type { BrainKind, LabData } from '../types'
 
@@ -38,6 +39,7 @@ export function CompareScreen({
   onDistillSave,
   onDistillLoad,
   distillSaved,
+  serverOnline,
 }: {
   compare: { rows?: CmpRow[]; error?: string } | null
   compareLoading: boolean
@@ -59,7 +61,10 @@ export function CompareScreen({
   onDistillSave: () => void
   onDistillLoad: () => void
   distillSaved: boolean
+  /** известность стенда (heartbeat App.tsx) — null пока не проверено, false — офлайн/GitHub Pages. */
+  serverOnline: boolean | null
 }) {
+  const offline = serverOnline === false
   return (
     <LabScreen
       title="Сравнение"
@@ -152,9 +157,12 @@ export function CompareScreen({
         <div className="lab-grid" style={{ marginTop: 6, alignItems: 'start' }}>
           <section className="lab-subcard">
             <h3 className="lab-sub" style={{ margin: 0 }}>Абляция зон коннектома</h3>
-            <button type="button" data-tip="Поочерёдно выключаем зоны синаптических каналов мозга и меряем каноническое трио. Строится ~20 секунд." disabled={ablationBusy} onClick={onRunAblation}>
-              {ablationBusy ? 'Испытываю зоны…' : 'Тест абляции зон'}
-            </button>
+            <div className="row" style={{ gap: 8 }}>
+              <button type="button" data-tip="Поочерёдно выключаем зоны синаптических каналов мозга и меряем каноническое трио. Строится ~20 секунд." disabled={ablationBusy || offline} onClick={onRunAblation}>
+                {ablationBusy ? 'Испытываю зоны…' : 'Тест абляции зон'}
+              </button>
+              {offline && <ServerOnlyBadge />}
+            </div>
             {ablation && (
               <table className="legend-table">
                 <thead>
@@ -198,9 +206,12 @@ export function CompareScreen({
 
           <section className="lab-subcard">
             <h3 className="lab-sub" style={{ margin: 0 }}>Карта отказов сетчатки</h3>
-            <button type="button" data-tip="Деградация при «умирании» части омматидиев: до 75% сетчатки слепнет; считается ~4-5 минут." disabled={faultsBusy} onClick={onRunFaults}>
-              {faultsBusy ? 'Отказываю омматидиям…' : 'Карта отказов сетчатки'}
-            </button>
+            <div className="row" style={{ gap: 8 }}>
+              <button type="button" data-tip="Деградация при «умирании» части омматидиев: до 75% сетчатки слепнет; считается ~4-5 минут." disabled={faultsBusy || offline} onClick={onRunFaults}>
+                {faultsBusy ? 'Отказываю омматидиям…' : 'Карта отказов сетчатки'}
+              </button>
+              {offline && <ServerOnlyBadge />}
+            </div>
             {faults && (
               <>
                 <svg viewBox="0 0 300 90" className="coev-ladder" role="img" aria-label="Промах при отказе омматидиев">
@@ -242,9 +253,10 @@ export function CompareScreen({
                   <option value="stub">схема</option>
                 </select>
               </label>
-              <button type="button" data-tip="Схема (16 весов) учится повторять команды учителя. Основную схему не трогаем — до кнопки «Применить»." disabled={distillBusy} onClick={onRunDistill}>
+              <button type="button" data-tip="Схема (16 весов) учится повторять команды учителя. Основную схему не трогаем — до кнопки «Применить»." disabled={distillBusy || offline} onClick={onRunDistill}>
                 {distillBusy ? 'Дистиллирую…' : 'Дистиллировать'}
               </button>
+              {offline && <ServerOnlyBadge />}
             </div>
             {distill && (
               <table className="legend-table">

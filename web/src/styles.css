@@ -178,11 +178,116 @@ select { cursor: pointer; }
 .chip.is-warn { border-color: var(--accent-secondary); color: var(--accent-secondary); }
 .chip.is-bad { border-color: var(--status-danger); color: var(--status-danger); }
 .chip.is-ok { border-color: var(--status-success); color: var(--status-success); }
+.server-only-badge { font-size: 11px; padding: 2px 8px; cursor: help; }
 
 /* ═══ каркас: верхняя панель + активное пространство ═══ */
 .shell { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); }
-/* clip, а не hidden: выезжающий инспектор не даёт горизонтальной прокрутки, а sticky внутри живёт */
-.workspace { min-height: 0; min-width: 0; position: relative; overflow-x: clip; }
+/* clip, а не hidden: выезжающий инспектор не даёт горизонтальной прокрутки, а sticky внутри живёт.
+   grid-row закреплён явно: без него скрытие .topbar (display:none, кинорежим) убирает его из
+   авто-расстановки грида, и .workspace съезжает в первую (auto-размерную) строку вместо второй */
+.workspace { grid-row: 2; min-height: 0; min-width: 0; position: relative; overflow-x: clip; }
+/* мягкий вход панели при смене рабочего пространства/вкладки (WorkspaceTransition.tsx) —
+   односторонний fade, без второй смонтированной панели (см. компонент, почему) */
+.ws-pane { height: 100%; min-height: 0; min-width: 0; opacity: 0; transform: scale(0.992); transition: opacity 0.2s ease, transform 0.2s ease; }
+.ws-pane--in { opacity: 1; transform: none; }
+
+/* кинорежим: шапка сворачивается (сцена и так занимает всё, что она отдаёт),
+   плавающая кнопка выхода остаётся поверх сцены в любом рабочем пространстве.
+   fixed, не absolute: на мобильном «Полёте» страница со скроллом выше экрана —
+   кнопка относительно .workspace осела бы на самом дне списка панелей, а не в
+   видимой части. Низ-право — свободный угол во всех трёх сценах: сверху уже
+   HUD «Полёта» (scene-hud) и меню шапки, снизу-слева — «Телеметрия»/якоря */
+.cinema-btn {
+  position: fixed;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  right: max(12px, env(safe-area-inset-right));
+  z-index: 60;
+  background: var(--surface-overlay);
+  backdrop-filter: blur(4px);
+}
+.cinema-btn.on { border-color: var(--accent-secondary); color: var(--accent-secondary); }
+
+/* баннер после демо-перехвата при первом визите (DemoBanner.tsx) — fixed, той же
+   причине, что и .cinema-btn: виден независимо от прокрутки страницы на мобильном */
+.demo-banner {
+  position: fixed;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 61;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, calc(100vw - 24px));
+  padding: 10px 12px 10px 16px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-m);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+  font-size: 14px;
+  color: var(--text-primary);
+  animation: demo-banner-in 0.2s ease;
+}
+/* своя анимация, не drawer-up: там to{transform:none} стирает постоянный translateX(-50%) */
+@keyframes demo-banner-in { from { transform: translate(-50%, 24px); opacity: 0.4; } to { transform: translate(-50%, 0); opacity: 1; } }
+.demo-banner span { flex: 1 1 auto; min-width: 0; }
+.demo-banner button { flex: none; }
+
+/* короткий тур «с чего начать» (Tour.tsx) — скрим не перехватывает клики (см. компонент),
+   «дырка» — box-shadow-спотлайт: проще и надёжнее clip-path на элементе неизвестного размера */
+.tour-scrim { position: fixed; inset: 0; z-index: 90; pointer-events: none; }
+.tour-hole {
+  position: fixed;
+  border-radius: 10px;
+  border: 2px solid var(--accent-primary);
+  box-shadow: 0 0 0 9999px rgba(4, 8, 11, 0.6);
+  transition: top 0.2s ease, left 0.2s ease, width 0.2s ease, height 0.2s ease;
+}
+body.theme-day .tour-hole { box-shadow: 0 0 0 9999px rgba(30, 45, 40, 0.45); }
+.tour-card {
+  position: fixed;
+  z-index: 91;
+  pointer-events: auto;
+  width: 300px;
+  padding: 14px 16px;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-m);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+}
+/* без привязки к элементу — по центру экрана (шаг «параметры пуска») */
+.tour-card:not([style*='top']) { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.tour-card b { display: block; margin-bottom: 6px; font-size: 15px; }
+.tour-card p { margin: 0 0 12px; font-size: 13.5px; line-height: 1.45; color: var(--text-secondary); }
+.tour-card__foot { display: flex; align-items: center; gap: 8px; }
+.tour-card__foot span { flex: 1 1 auto; font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
+/* остаётся только 3D-сцена: шапка, инспектор/боковая колонка и нижняя полоса телеметрии
+   скрыты — сцена растягивается на всю площадь во всех трёх пространствах (Полёт/Рой/Дуэль) */
+.shell--cinema .topbar,
+.shell--cinema .inspector,
+.shell--cinema .inspector-scrim,
+.shell--cinema .telemetrybar,
+.shell--cinema .ws-side {
+  display: none;
+}
+/* фиксация поверх всего: надёжнее, чем перебивать высоты каждого мобильного брейкпоинта
+   по отдельности (там сцена — clamp() высотой и страница со скроллом, а не 100%) */
+.shell--cinema { position: fixed; inset: 0; height: 100dvh; z-index: 50; }
+body:has(.shell--cinema) { overflow: hidden; }
+.shell--cinema .flight,
+.shell--cinema .twocol-ws {
+  height: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.shell--cinema .flight__main { grid-template-rows: minmax(0, 1fr); min-height: 0; }
+.shell--cinema .scene-card,
+.shell--cinema .ws-main { height: 100%; min-height: 0; border-radius: 0; }
+.shell--cinema .scene-fab--params { display: none; }
 
 .topbar {
   display: flex;
@@ -876,6 +981,36 @@ body.theme-day .drawer-scrim { background: rgba(30, 45, 40, 0.3); }
 .viewport { display: block; width: 100%; height: 100%; min-height: 200px; background: var(--scene-bg); position: relative; }
 .viewport--3d canvas { display: block; width: 100%; height: 100%; }
 .viewport--seeker { min-height: 150px; background: var(--seeker-bg); border-radius: var(--radius-s); }
+
+/* заставка загрузки 3D-чанка (lazyViews.tsx::Viewport3DSkeleton) — вместо пустого div */
+.viewport--skeleton { display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.viewport-skeleton__grid {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(var(--chart-grid) 1px, transparent 1px), linear-gradient(90deg, var(--chart-grid) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+.viewport-skeleton__sweep {
+  position: absolute;
+  inset: -20%;
+  background: conic-gradient(from 0deg, var(--accent-primary-soft), transparent 35%);
+  animation: skeleton-sweep 2.2s linear infinite;
+  mix-blend-mode: screen;
+}
+body.theme-day .viewport-skeleton__sweep { mix-blend-mode: multiply; }
+@keyframes skeleton-sweep { to { transform: rotate(360deg); } }
+.viewport-skeleton__label {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  padding: 6px 14px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-s);
+}
 
 /* журнал */
 .log { margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--text-muted); overflow: auto; }

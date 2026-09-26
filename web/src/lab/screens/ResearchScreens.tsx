@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { CHART, drawChart, exportCsv, palette, useAutoRedraw } from '../charts'
 import { LabScreen } from '../LabScreen'
+import { ServerOnlyBadge } from '../ServerOnlyBadge'
 import type { CoevData, LadderData, MapData, ScalingData, TransferData } from '../types'
 import type { BrainKind } from '../types'
 
@@ -36,6 +37,7 @@ export function MapScreen({
   onCoevTrain,
   coevTraining,
   coevLadder,
+  serverOnline,
 }: {
   mapData: MapData | null
   mapBusy: boolean
@@ -54,15 +56,20 @@ export function MapScreen({
   onCoevTrain: () => void
   coevTraining: boolean
   coevLadder: LadderData | null
+  serverOnline: boolean | null
 }) {
+  const offline = serverOnline === false
   return (
     <LabScreen
       title="Карта"
       about="Сетка «манёвр × закон наведения» (5 законов, включая истинная ПН): промах сохранённого мозга против эталона с тем же законом на встречных 8 км. Зелёная ячейка — муха точнее эталона, красная — хуже."
       primary={
-        <button type="button" className="primary" disabled={mapBusy} onClick={onRunMap}>
-          {mapBusy ? 'Облёт сетки… (2-5 мин)' : 'Построить карту'}
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          <button type="button" className="primary" disabled={mapBusy || offline} onClick={onRunMap}>
+            {mapBusy ? 'Облёт сетки… (2-5 мин)' : 'Построить карту'}
+          </button>
+          {offline && <ServerOnlyBadge />}
+        </div>
       }
       actions={
         <button type="button" className={mapColor === 'energy' ? 'on' : ''} data-tip="Цвет ячеек: по точности (промах) или по «цене» траектории — интегралу перегрузки ∫n²dt." disabled={!mapData} onClick={() => onMapColor(mapColor === 'miss' ? 'energy' : 'miss')}>
@@ -172,15 +179,16 @@ export function MapScreen({
       <section className="lab-subcard">
         <h3 className="lab-sub" style={{ margin: 0 }}>Коэволюция: цель против мухи</h3>
         <div className="row">
-          <button type="button" data-tip="Сбросить популяцию целей и начать гонку вооружений заново." disabled={coevBusy} onClick={onCoevStart}>
+          <button type="button" data-tip="Сбросить популяцию целей и начать гонку вооружений заново." disabled={coevBusy || offline} onClick={onCoevStart}>
             {coevBusy ? 'Запускаю…' : 'Старт'}
           </button>
-          <button type="button" data-tip="Одно поколение: цели мутируют, выживает та, от которой муха промахнулась сильнее всего." disabled={coevBusy} onClick={onCoevStep}>
+          <button type="button" data-tip="Одно поколение: цели мутируют, выживает та, от которой муха промахнулась сильнее всего." disabled={coevBusy || offline} onClick={onCoevStep}>
             {coevBusy ? 'Облёт…' : 'Поколение'}
           </button>
           <button type="button" data-tip="Сбросить гонку." disabled={coevBusy} onClick={onCoevReset}>
             Сброс
           </button>
+          {offline && <ServerOnlyBadge />}
         </div>
         {coev && (
           <>
@@ -246,9 +254,12 @@ export function MapScreen({
             )}
           </>
         )}
-        <button type="button" className="go" data-tip="Дообучить муху по результату против опаснейших целей коэволюции и замерить лестницу." disabled={coevTraining || !coev} onClick={onCoevTrain}>
-          {coevTraining ? 'Дообучаю муху…' : 'Замкнуть петлю: дообучить муху'}
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          <button type="button" className="go" data-tip="Дообучить муху по результату против опаснейших целей коэволюции и замерить лестницу." disabled={coevTraining || !coev || offline} onClick={onCoevTrain}>
+            {coevTraining ? 'Дообучаю муху…' : 'Замкнуть петлю: дообучить муху'}
+          </button>
+          {offline && <ServerOnlyBadge />}
+        </div>
         {coevLadder && (
           <p className="lab-hint">
             Лестница: против чемпиона муха промахивалась на <b>{coevLadder.fly_miss_before} м</b>, после дообучения ({coevLadder.generations} поколений) —{' '}
@@ -268,21 +279,27 @@ export function TransferScreen({
   transferKind,
   onTransferKind,
   onRunTransfer,
+  serverOnline,
 }: {
   transfer: TransferData | null
   transferBusy: boolean
   transferKind: BrainKind
   onTransferKind: (k: BrainKind) => void
   onRunTransfer: () => void
+  serverOnline: boolean | null
 }) {
+  const offline = serverOnline === false
   return (
     <LabScreen
       title="Переносимость"
       about="Каждая строка — отдельный свежий мозг, обученный только на одном манёвре; столбцы — испытания на всех манёврах. Диагональ — «обучался здесь», вне диагонали — перенос навыка."
       primary={
-        <button type="button" className="primary" disabled={transferBusy} onClick={onRunTransfer}>
-          {transferBusy ? 'Обучаю и испытываю…' : 'Построить матрицу'}
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          <button type="button" className="primary" disabled={transferBusy || offline} onClick={onRunTransfer}>
+            {transferBusy ? 'Обучаю и испытываю…' : 'Построить матрицу'}
+          </button>
+          {offline && <ServerOnlyBadge />}
+        </div>
       }
       actions={
         <label data-tip="Какой мозг обучать в матрице. Коннектом считается несколько минут, схема/полный — секунды." className="chip">
@@ -384,13 +401,16 @@ export function ScalingScreen({
   scalingKind,
   onScalingKind,
   onRunScaling,
+  serverOnline,
 }: {
   scaling: ScalingData | null
   scalingBusy: boolean
   scalingKind: 'full' | 'connectome'
   onScalingKind: (k: 'full' | 'connectome') => void
   onRunScaling: () => void
+  serverOnline: boolean | null
 }) {
+  const offline = serverOnline === false
   const c1 = useRef<HTMLCanvasElement>(null)
   const c2 = useRef<HTMLCanvasElement>(null)
 
@@ -415,9 +435,12 @@ export function ScalingScreen({
       title="Масштаб мозга"
       about="Мозги разного размера обучаются одинаково и сравниваются по каноническому трио: прямая проверка того, окупается ли расширение сети."
       primary={
-        <button type="button" className="primary" disabled={scalingBusy} onClick={onRunScaling}>
-          {scalingBusy ? 'Растю мозги…' : 'Прогнать серию'}
-        </button>
+        <div className="row" style={{ gap: 8 }}>
+          <button type="button" className="primary" disabled={scalingBusy || offline} onClick={onRunScaling}>
+            {scalingBusy ? 'Растю мозги…' : 'Прогнать серию'}
+          </button>
+          {offline && <ServerOnlyBadge />}
+        </div>
       }
       actions={
         <label data-tip="Чей размер меряем: каналы коннектома 32/64/128 или пул полного мозга 8/16/32/64." className="chip">

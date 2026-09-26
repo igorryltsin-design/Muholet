@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Playback } from './EngagementView'
 import { LabView, type LabTab, type AblationData, type CaptureZoneData, type CoevData, type DistillData, type FaultsData, type LadderData, type MapData, type MonteCarloData, type ScalingData, type TransferData } from './lab/LabView'
 import { HelpView } from './HelpView'
+import { Tour } from './shell/Tour'
 import { applyServerW, isTrained, markTrained, setBrainKind } from './brain'
 import { computeRunMetrics, navMetrics } from './metrics'
 import { localRun } from './localSim'
@@ -13,6 +14,8 @@ import { planWendy, type WendyLine, type WendyPlan } from './wendy'
 import { royLine, type RoyKey } from './roy'
 import { exportCsv } from './lab/charts'
 import { resetLayout } from './ui'
+import { perfBudget } from './perf'
+import { buzz, HAPTIC } from './haptics'
 import { AppShell } from './shell/AppShell'
 import type { Workspace } from './shell/TopBar'
 import { FlightWorkspace } from './shell/FlightWorkspace'
@@ -90,6 +93,25 @@ function rusFrame(fr: Frame): Frame {
 
 const nCellsLabel = (b: BrainKind) => (b === 'full' ? 4439 : b === 'connectome' ? 108781 : 279)
 
+/** Демо-сценарий первого визита (App.tsx::runDemo) — наглядный перехват со змейкой,
+ * умеренная дальность. Считается локально (localRun), без единого сетевого запроса —
+ * работает одинаково на стенде и на GitHub Pages. */
+const DEMO_SCENARIO: Scenario = { ...DEFAULT_SCENARIO, range_m: 5000, maneuver: 'weave', n_target: 6 }
+
+/** Эвристика «уже реальный пользователь»: панели/секции сворачивались хоть раз —
+ * значит стенд уже открывали до появления демо (ui.tsx::resetLayout — то же именование). */
+function hasPriorUsage(): boolean {
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const k = localStorage.key(i)
+      if (k && (k.startsWith('muholet-panel-') || k.startsWith('muholet-acc-'))) return true
+    }
+  } catch {
+    /* приватный режим — считаем «первый визит» */
+  }
+  return false
+}
+
 export function App() {
   // сценарий гидратируется из localStorage синхронно (в инициализаторе):
   // любой effect-restore проигрывает автосохранению [sc] на том же коммите
@@ -160,8 +182,13 @@ export function App() {
   const [training, setTraining] = useState(false)
   const [labTab, setLabTab] = useState<LabTab>('run')
   const [helpOpen, setHelpOpen] = useState(false)
+  const [tourOpen, setTourOpen] = useState(false)
   // пасхалка: муха за штурвалом — разрез корпуса, рычаги = реальные команды DN
   const [egg, setEgg] = useState(false)
+  // кинорежим: сцена во весь экран без шапки/панелей (клавиша K, выход — Esc)
+  const [cinema, setCinema] = useState(false)
+  // баннер после демо-перехвата первого визита (App.tsx::runDemo)
+  const [demoBanner, setDemoBanner] = useState(false)
   // озвучка: жужжание в тон манёвра + голосовые фразы (Silero, web/public/audio).
   // Настройки читаются СИНХРОННО в инициализаторах useState: в dev-StrictMode
   // эффект записи на втором проходе маунта натирает хранилище дефолтами, пока
@@ -614,6 +641,9 @@ export function App() {
   const clearLog = () => setLog([])
   const stop = useRef(false)
   const lastFramesRef = useRef<Frame[]>([])
+  // счётчик пуска: инстант-реплей планируется с задержкой (500мс) — если за это время
+  // начался новый пуск, устаревший реплей не должен перекрыть его свежий playback
+  const runIdRef = useRef(0)
   const swarmStop = useRef(false)
   const populationRef = useRef<FlyGenome[] | null>(null)
 
@@ -637,7 +667,7 @@ export function App() {
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', day ? '#e8eeea' : '#0a0f14')
   }, [day])
 
-  // Горячие клавиши: Пробел — пуск, X — пасхалка.
+  // Горячие клавиши: Пробел — пуск, X — пасхалка, K — кинорежим, Esc — выйти из кино.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName
@@ -650,6 +680,14 @@ export function App() {
         e.preventDefault()
         setEgg((v) => !v)
       }
+      if (e.code === 'KeyK') {
+        e.preventDefault()
+        buzz(HAPTIC.cinemaToggle)
+        setCinema((v) => !v)
+      }
+      // выход из кино по Esc не перехватывает событие — инспектор и другие Esc-обработчики
+      // (FlightWorkspace) продолжают работать своим порядком независимо от этого
+      if (e.code === 'Escape') setCinema((v) => (v ? false : v))
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -794,7 +832,9 @@ export function App() {
     const sum = typeof summary === 'function' ? summary() : summary
     if (sum) {
       const got = typeof hit === 'function' ? hit() : hit
-      say(got ?? sum.startsWith('Перехват') ? 'hit' : 'miss')
+      const gotHit = got ?? sum.startsWith('Перехват')
+      say(gotHit ? 'hit' : 'miss')
+      buzz(gotHit ? HAPTIC.hit : HAPTIC.miss)
       setDone(sum)
     }
     const finalPlan = shtrum ?? live?.shtrum() ?? null
@@ -802,6 +842,50 @@ export function App() {
     const finalWendy = wendy ?? live?.wendy() ?? null
     if (finalWendy?.final) showWendy(finalWendy.final)
   }
+
+  /** Демо-прогон первого визита: та же playFrames-раскадровка, что у настоящего пуска,
+   *  но данные — из синхронного localRun (ноль сетевых запросов, честная работа на
+   *  GitHub Pages) и НЕ попадают в лабораторию (labRef/recordRun) — это витрина, а не
+   *  прогон, который должен смешаться с историей реальных экспериментов. */
+  const runDemo = () => {
+    // флаг «показывали» ставится здесь, а не в эффекте-планировщике: React
+    // StrictMode в dev монтирует эффект дважды (mount→cleanup→mount) — если
+    // писать флаг в самом эффекте, первый (одноразовый) вызов помечает демо
+    // «показанным» раньше, чем второй (настоящий) успевает поставить свой
+    // таймер, и демо не показывается вовсе. Здесь же исполнение гарантированно
+    // одно: до этой строки доходит только таймер, который дожил до срабатывания.
+    try {
+      localStorage.setItem('muholet-demo-seen', '1')
+    } catch {
+      /* приватный режим */
+    }
+    const frames = [...localRun(DEMO_SCENARIO)]
+    if (frames.length < 2 || stop.current) return
+    lastFramesRef.current = frames
+    const m = computeRunMetrics(frames, DEMO_SCENARIO.kill_radius_m)
+    setLog((rows) => ['Демо-перехват (первый визит) — управление вернётся после показа.', ...rows].slice(0, 14))
+    void playFrames(frames, summaryOf(m), undefined, null, false, undefined, m.hit).then(() => {
+      if (!stop.current) setDemoBanner(true)
+    })
+  }
+
+  // Демо при первом визите: без сохранённых панелей/секций — значит стенд открыли впервые.
+  // Флаг «показывали» ставится внутри runDemo(), не здесь — см. комментарий там
+  // (React StrictMode дважды монтирует этот эффект в dev). Прерывается кликом/
+  // навигацией через тот же stop.current, что и настоящий пуск (playFrames
+  // проверяет его каждую итерацию).
+  useEffect(() => {
+    let seen = true
+    try {
+      seen = localStorage.getItem('muholet-demo-seen') === '1'
+    } catch {
+      /* приватный режим — считаем «уже показывали», чтобы не мигать демо каждый визит */
+    }
+    if (seen || hasPriorUsage()) return
+    const t = window.setTimeout(runDemo, 400)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   /** Метрики прогона в историю лаборатории: серверные поля если есть, иначе считаем по кадрам. */
   const recordRun = (
@@ -890,19 +974,51 @@ export function App() {
       setLog((rows) => [`Свободная расстановка: до цели ${(d / 1000).toFixed(0)} км — даже на встречных курсах сближение ≥ ${(tMin / 60).toFixed(1)} мин, а окно счёта ${sc.t_max} с: перехват не успевает (граница расчёта, не физика)`, ...rows].slice(0, 14))
   }
 
+  /** Честный замедленный повтор финала: тот же Playback-механизм, что у showDuelReplay —
+   *  хвост реальных кадров последних ~1.5с, показан медленнее (данные те же, просто темп
+   *  ниже). Только «Полёт», только перехват, не дуэль/рой, не под активной озвучкой —
+   *  не спорит с уже идущими фразами штурмана. Пропускается на слабом тире устройства и
+   *  при prefers-reduced-motion. myRunId — если за 500мс паузы начался новый пуск,
+   *  устаревший повтор не перекрывает его свежий playback. */
+  const maybeInstantReplay = (myRunId: number, frames: Frame[], hit: boolean | null, isDuel: boolean) => {
+    if (ws !== 'flight' || !hit || isDuel || soundOn || frames.length < 2) return
+    if (!perfBudget().allowCinematicReplay) return
+    try {
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    } catch {
+      /* приватный режим/старый браузер — просто не пропускаем через это условие */
+    }
+    const tEnd = frames[frames.length - 1].t
+    const tail = frames.filter((fr) => fr.t >= tEnd - 1.5)
+    if (tail.length < 2) return
+    const traj_m = tail.map((fr) => fr.missile)
+    const traj_t = tail.map((fr) => fr.target)
+    const windowMs = Math.max(1, (tail[tail.length - 1].t - tail[0].t) * 1000)
+    const durationMs = Math.max(2000, Math.min(6000, windowMs * 3.5))
+    window.setTimeout(() => {
+      if (runIdRef.current !== myRunId) return // новый пуск уже начался — не перекрываем его
+      setSceneBadge('Повтор · ×3.5 замедление')
+      setPlayback({ results: [{ traj_m, traj_t, fitness: 0, hit: true }], bestIdx: 0, startedAt: performance.now(), durationMs, cinematic: true })
+    }, 500)
+  }
+
   /** Потоковый прогон по /api/ws/run: движение начинается, когда прилетели
    *  первые ~0,5 с траектории, а сервер ещё доинтегрирует хвост (вся пауза
    *  «Пуск → кадр» была в полном ожидании POST-ответа, 3–6 с). Метрики
    *  догоняют игру сообщением 'done' — вердикт, лаборатория и реплики
    *  штурмана встают по ним. false — коннект/старт не удался до первого
    *  кадра: run() пересчитает прежним POST (в том числе офлайн-локалом). */
-  const streamRun = async (body: Record<string, unknown>, he: boolean, flown: Scenario = sc): Promise<boolean> => {
+  const streamRun = async (
+    body: Record<string, unknown>,
+    he: boolean,
+    flown: Scenario = sc,
+  ): Promise<{ ok: boolean; frames: Frame[]; hit: boolean | null; duel: boolean }> => {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     let ws: WebSocket
     try {
       ws = new WebSocket(`${proto}://${location.host}/api/ws/run`)
     } catch {
-      return false
+      return { ok: false, frames: [], hit: null, duel: false }
     }
     const frames: Frame[] = []
     let answer: Record<string, unknown> & { frames?: Frame[] } | null = null
@@ -911,6 +1027,7 @@ export function App() {
     let plan: ShtrumPlan | null = null
     let wendyPlan: WendyPlan | null = null
     let hitFinal: boolean | null = null
+    let isDuelFinal = false
     const finalize = () => {
       if (!answer) return
       lastFramesRef.current = frames
@@ -920,6 +1037,7 @@ export function App() {
       const m = recordRun(frames, answer as unknown as Parameters<typeof recordRun>[1] | undefined)
       hitFinal = m.hit
       logFreeWindow(m)
+      isDuelFinal = Boolean(answer.duel)
       const duelInfo = answer.duel
         ? { result: (answer.duel_result as 'missile' | 'evader' | null) ?? null, tSurvived: (answer.t_survived as number | null) ?? null, fuse: Boolean(answer.fuse_expired) }
         : null
@@ -975,7 +1093,7 @@ export function App() {
       } catch {
         /* уже закрыт */
       }
-      return false
+      return { ok: false, frames, hit: null, duel: false }
     }
     await playFrames(frames, () => summary, undefined, null, he, {
       done: () => finished,
@@ -987,13 +1105,14 @@ export function App() {
     } catch {
       /* уже закрыт */
     }
-    return true
+    return { ok: true, frames, hit: hitFinal, duel: isDuelFinal }
   }
 
   // patch — явная надбавка к сценарию для запуска «прямо сейчас» из дуэльного
   // космоса: setState ещё не подействовал, а дрессированный дуэт хочется
   // летящим в этом же клике (Красная королева: «Дуэль чемпионов», «Повторить бой»)
   const run = async (patch?: Partial<Scenario>) => {
+    const myRunId = ++runIdRef.current
     const s = patch ? ({ ...sc, ...patch } as Scenario) : sc
     stop.current = true
     await new Promise((r) => setTimeout(r, 40))
@@ -1006,6 +1125,7 @@ export function App() {
     setSceneBadge(null)
     setSwarmCurve(null)
     setSwarmValid([])
+    setDemoBanner(false) // настоящий пуск — демо-баннер своё сказал
     if (shtrumHideRef.current) window.clearTimeout(shtrumHideRef.current)
     setShtrumCaption(null)
     if (wendyHideRef.current) window.clearTimeout(wendyHideRef.current)
@@ -1022,10 +1142,12 @@ export function App() {
     // если стрим не задался до первого кадра — прежний полный POST ниже
     let streamed = false
     try {
-      streamed = await streamRun({ ...s, brain: s.brain }, he, s)
+      const r = await streamRun({ ...s, brain: s.brain }, he, s)
+      streamed = r.ok
       if (streamed) {
         saveLab()
         labTick()
+        maybeInstantReplay(myRunId, r.frames, r.hit, r.duel)
       }
     } catch {
       streamed = false // любое падение стрима — пересчитываем прежним путём
@@ -1086,6 +1208,7 @@ export function App() {
         )
         saveLab()
         labTick()
+        maybeInstantReplay(myRunId, frames, m.hit, Boolean(duelInfo))
         return
       }
       throw new Error(`сервер ${res.status}`)
@@ -1101,6 +1224,7 @@ export function App() {
       await playFrames(frames, summaryOf(m), undefined, humorOn ? planShtrum(frames, m, s, he) : null, he, undefined, m.hit)
       saveLab()
       labTick()
+      maybeInstantReplay(myRunId, frames, m.hit, false)
     } finally {
       setBusy(false)
     }
@@ -2102,6 +2226,17 @@ export function App() {
       day={day}
       onToggleDay={() => setDay((d) => !d)}
       onHelp={() => setHelpOpen(true)}
+      cinema={cinema}
+      onToggleCinema={() => {
+        buzz(HAPTIC.cinemaToggle)
+        setCinema((v) => !v)
+      }}
+      demoBanner={demoBanner}
+      onDemoTour={() => {
+        setDemoBanner(false)
+        setTourOpen(true)
+      }}
+      onDemoBannerClose={() => setDemoBanner(false)}
       menuItems={[
         {
           label: soundOn ? 'Озвучка: выключить' : 'Озвучка: включить',
@@ -2116,6 +2251,9 @@ export function App() {
           label: humorOn ? 'Юмор: выключить' : 'Юмор: вторая муха-штурман',
           onClick: () => setHumorOn((v) => !v),
         },
+        { label: cinema ? 'Кинорежим: выключить' : 'Кинорежим (K)', onClick: () => setCinema((v) => !v) },
+        { label: 'Показать демо заново', onClick: () => { setWs('flight'); runDemo() } },
+        { label: 'Короткий тур: с чего начать', onClick: () => setTourOpen(true) },
         { label: 'Сбросить раскладку панелей', onClick: resetLayout },
       ]}
     >
@@ -2235,6 +2373,7 @@ export function App() {
           onExportCsv={exportDuelCsv}
           onDuelNow={(patch) => void run(patch)}
           onShowReplay={showDuelReplay}
+          serverOnline={serverOnline}
         />
       )}
       {ws === 'lab' && (
@@ -2343,9 +2482,11 @@ export function App() {
           onVoiceKind={setVoiceKind}
           humorOn={humorOn}
           onHumor={setHumorOn}
+          serverOnline={serverOnline}
         />
       )}
       {helpOpen && <HelpView onClose={() => setHelpOpen(false)} />}
+      {tourOpen && <Tour onClose={() => setTourOpen(false)} />}
     </AppShell>
   )
 }

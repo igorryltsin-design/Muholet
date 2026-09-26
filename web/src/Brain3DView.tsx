@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { perfBudget } from './perf'
 import type { BrainKind, BrainRegion, Frame } from './types'
 
 /**
@@ -403,7 +404,7 @@ export function Brain3DView({ frame, kind, day }: { frame: Frame | null; kind: B
       const pulseArr = new Float32Array(activeLinks.length * 3 * 3)
       pulseGeo.setAttribute('position', new THREE.BufferAttribute(pulseArr, 3).setUsage(THREE.DynamicDrawUsage))
       const pulseMat = new THREE.PointsMaterial({
-        size: 0.045,
+        size: 0.045 * perfBudget().brainParticles, // тир устройства: мельче на low — дешевле fill-rate
         map: dotTexture(),
         color: dayNow ? 0x0e5a44 : 0xd8ffe9,
         transparent: true,
@@ -597,7 +598,16 @@ export function Brain3DView({ frame, kind, day }: { frame: Frame | null; kind: B
     canvas.addEventListener('mousemove', onMove)
     canvas.addEventListener('mouseleave', onLeave)
 
+    // скрытая вкладка: мозг «спит» полностью, не только по частоте — импульсы
+    // и вращение облака не тратят кадры, пока вкладка не активна
+    const onVisibility = () => {
+      if (document.hidden) cancelAnimationFrame(raf)
+      else raf = requestAnimationFrame(tick)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
       cancelAnimationFrame(raf)
       ro.disconnect()
       canvas.removeEventListener('mousemove', onMove)

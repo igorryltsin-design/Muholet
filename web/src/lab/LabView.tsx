@@ -115,6 +115,7 @@ export function LabView({
   onVoiceKind,
   humorOn,
   onHumor,
+  serverOnline,
 }: {
   data: LabData
   tab: LabTab
@@ -215,6 +216,8 @@ export function LabView({
   onVoiceKind: (v: 'male' | 'female') => void
   humorOn: boolean
   onHumor: (v: boolean) => void
+  /** известность стенда (heartbeat App.tsx) — прокидывается в экраны, которые считаются только на сервере. */
+  serverOnline: boolean | null
 }) {
   return (
     <div className="labws">
@@ -288,6 +291,7 @@ export function LabView({
           onDistillSave={onDistillSave}
           onDistillLoad={onDistillLoad}
           distillSaved={distillSaved}
+          serverOnline={serverOnline}
         />
       )}
       {tab === 'neff' && <NeffScreen data={data} onExport={onExportNeff} />}
@@ -314,10 +318,15 @@ export function LabView({
           onCoevTrain={onCoevTrain}
           coevTraining={coevTraining}
           coevLadder={coevLadder}
+          serverOnline={serverOnline}
         />
       )}
-      {tab === 'transfer' && <TransferScreen transfer={transfer} transferBusy={transferBusy} transferKind={transferKind} onTransferKind={onTransferKind} onRunTransfer={onRunTransfer} />}
-      {tab === 'scaling' && <ScalingScreen scaling={scaling} scalingBusy={scalingBusy} scalingKind={scalingKind} onScalingKind={onScalingKind} onRunScaling={onRunScaling} />}
+      {tab === 'transfer' && (
+        <TransferScreen transfer={transfer} transferBusy={transferBusy} transferKind={transferKind} onTransferKind={onTransferKind} onRunTransfer={onRunTransfer} serverOnline={serverOnline} />
+      )}
+      {tab === 'scaling' && (
+        <ScalingScreen scaling={scaling} scalingBusy={scalingBusy} scalingKind={scalingKind} onScalingKind={onScalingKind} onRunScaling={onRunScaling} serverOnline={serverOnline} />
+      )}
       {tab === 'formula' && <FormulaScreen />}
       {tab === 'params' && (
         <ParamsScreen
@@ -337,6 +346,7 @@ export function LabView({
           smooth={smooth}
           showFact={showFact}
           onLabCfg={onLabCfg}
+          serverOnline={serverOnline}
         />
       )}
     </div>

@@ -3,6 +3,7 @@ import { FlyRig } from '../ui'
 import { SeekerView } from '../SeekerView'
 import { controlOutputs, navMetrics } from '../metrics'
 import { fmt, LAYERS, LAYER_TIP, SPEED_MODE_LABEL } from './labels'
+import { useTweenedNumber } from '../useTween'
 import type { Frame, Scenario } from '../types'
 
 /**
@@ -24,24 +25,29 @@ export function TelemetryBar({
   onOpenFull: () => void
 }) {
   const nm = frame ? navMetrics(frame) : null
+  // плавный твин: цифры не «щёлкают» на кадровом шаге плейбека (App.tsx::playFrames, dt=40/80мс)
+  const rangeKm = useTweenedNumber((frame?.range_m ?? scenario.range_m) / 1000)
+  const vc = useTweenedNumber(frame?.v_c ?? 0)
+  const tgo = useTweenedNumber(nm?.tgo ?? 0)
+  const zem = useTweenedNumber(nm?.zem ?? 0)
   return (
     <div className="telemetrybar">
       <div className="telemetry">
         <div data-tip="Дистанция ракета–цель в этот момент.">
           <small>Дальность</small>
-          <b>{fmt((frame?.range_m ?? scenario.range_m) / 1000, 2)} км</b>
+          <b>{fmt(rangeKm, 2)} км</b>
         </div>
         <div data-tip="Как быстро сокращается дистанция. Отрицательная — цель начинает уходить.">
           <small>Сближение</small>
-          <b>{fmt(frame?.v_c ?? 0, 0)} м/с</b>
+          <b>{fmt(vc, 0)} м/с</b>
         </div>
         <div data-tip="Радиальная оценка оставшегося времени t_radial = R/V_сбл (не точное время до встречи).">
           <small>R/V_сбл</small>
-          <b>{fmt(nm?.tgo ?? 0, 2)} с</b>
+          <b>{fmt(tgo, 2)} с</b>
         </div>
         <div data-tip="h_cv — прогноз промаха при неизменных текущих скоростях (прямая экстраполяция). Работа наведения — стянуть к нулю.">
           <small>Прогноз h_cv</small>
-          <b>{fmt(nm?.zem ?? 0, 0)} м</b>
+          <b>{fmt(zem, 0)} м</b>
         </div>
         {statusText && <div className={`telemetry__status ${statusKind}`}>{statusText}</div>}
       </div>
