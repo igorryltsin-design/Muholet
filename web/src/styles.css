@@ -181,8 +181,52 @@ select { cursor: pointer; }
 
 /* ═══ каркас: верхняя панель + активное пространство ═══ */
 .shell { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); }
-/* clip, а не hidden: выезжающий инспектор не даёт горизонтальной прокрутки, а sticky внутри живёт */
-.workspace { min-height: 0; min-width: 0; position: relative; overflow-x: clip; }
+/* clip, а не hidden: выезжающий инспектор не даёт горизонтальной прокрутки, а sticky внутри живёт.
+   grid-row закреплён явно: без него скрытие .topbar (display:none, кинорежим) убирает его из
+   авто-расстановки грида, и .workspace съезжает в первую (auto-размерную) строку вместо второй */
+.workspace { grid-row: 2; min-height: 0; min-width: 0; position: relative; overflow-x: clip; }
+
+/* кинорежим: шапка сворачивается (сцена и так занимает всё, что она отдаёт),
+   плавающая кнопка выхода остаётся поверх сцены в любом рабочем пространстве.
+   fixed, не absolute: на мобильном «Полёте» страница со скроллом выше экрана —
+   кнопка относительно .workspace осела бы на самом дне списка панелей, а не в
+   видимой части. Низ-право — свободный угол во всех трёх сценах: сверху уже
+   HUD «Полёта» (scene-hud) и меню шапки, снизу-слева — «Телеметрия»/якоря */
+.cinema-btn {
+  position: fixed;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  right: max(12px, env(safe-area-inset-right));
+  z-index: 60;
+  background: var(--surface-overlay);
+  backdrop-filter: blur(4px);
+}
+.cinema-btn.on { border-color: var(--accent-secondary); color: var(--accent-secondary); }
+/* остаётся только 3D-сцена: шапка, инспектор/боковая колонка и нижняя полоса телеметрии
+   скрыты — сцена растягивается на всю площадь во всех трёх пространствах (Полёт/Рой/Дуэль) */
+.shell--cinema .topbar,
+.shell--cinema .inspector,
+.shell--cinema .inspector-scrim,
+.shell--cinema .telemetrybar,
+.shell--cinema .ws-side {
+  display: none;
+}
+/* фиксация поверх всего: надёжнее, чем перебивать высоты каждого мобильного брейкпоинта
+   по отдельности (там сцена — clamp() высотой и страница со скроллом, а не 100%) */
+.shell--cinema { position: fixed; inset: 0; height: 100dvh; z-index: 50; }
+body:has(.shell--cinema) { overflow: hidden; }
+.shell--cinema .flight,
+.shell--cinema .twocol-ws {
+  height: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.shell--cinema .flight__main { grid-template-rows: minmax(0, 1fr); min-height: 0; }
+.shell--cinema .scene-card,
+.shell--cinema .ws-main { height: 100%; min-height: 0; border-radius: 0; }
+.shell--cinema .scene-fab--params { display: none; }
 
 .topbar {
   display: flex;

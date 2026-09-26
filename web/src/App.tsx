@@ -164,6 +164,8 @@ export function App() {
   const [helpOpen, setHelpOpen] = useState(false)
   // пасхалка: муха за штурвалом — разрез корпуса, рычаги = реальные команды DN
   const [egg, setEgg] = useState(false)
+  // кинорежим: сцена во весь экран без шапки/панелей (клавиша K, выход — Esc)
+  const [cinema, setCinema] = useState(false)
   // озвучка: жужжание в тон манёвра + голосовые фразы (Silero, web/public/audio).
   // Настройки читаются СИНХРОННО в инициализаторах useState: в dev-StrictMode
   // эффект записи на втором проходе маунта натирает хранилище дефолтами, пока
@@ -642,7 +644,7 @@ export function App() {
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', day ? '#e8eeea' : '#0a0f14')
   }, [day])
 
-  // Горячие клавиши: Пробел — пуск, X — пасхалка.
+  // Горячие клавиши: Пробел — пуск, X — пасхалка, K — кинорежим, Esc — выйти из кино.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName
@@ -655,6 +657,14 @@ export function App() {
         e.preventDefault()
         setEgg((v) => !v)
       }
+      if (e.code === 'KeyK') {
+        e.preventDefault()
+        buzz(HAPTIC.cinemaToggle)
+        setCinema((v) => !v)
+      }
+      // выход из кино по Esc не перехватывает событие — инспектор и другие Esc-обработчики
+      // (FlightWorkspace) продолжают работать своим порядком независимо от этого
+      if (e.code === 'Escape') setCinema((v) => (v ? false : v))
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -2148,6 +2158,11 @@ export function App() {
       day={day}
       onToggleDay={() => setDay((d) => !d)}
       onHelp={() => setHelpOpen(true)}
+      cinema={cinema}
+      onToggleCinema={() => {
+        buzz(HAPTIC.cinemaToggle)
+        setCinema((v) => !v)
+      }}
       menuItems={[
         {
           label: soundOn ? 'Озвучка: выключить' : 'Озвучка: включить',
@@ -2162,6 +2177,7 @@ export function App() {
           label: humorOn ? 'Юмор: выключить' : 'Юмор: вторая муха-штурман',
           onClick: () => setHumorOn((v) => !v),
         },
+        { label: cinema ? 'Кинорежим: выключить' : 'Кинорежим (K)', onClick: () => setCinema((v) => !v) },
         { label: 'Сбросить раскладку панелей', onClick: resetLayout },
       ]}
     >
