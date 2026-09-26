@@ -138,7 +138,7 @@ export function FlightWorkspace({
                 <option value="free">камера: свободная</option>
                 <option value="chase">камера: вдогон</option>
               </select>
-              <button type="button" className={geometryOn ? 'on' : ''} data-tip="Треугольник перехвата, круг БЧ, вектор команды и ожидаемый промах прямо на сцене." onClick={onToggleGeometry}>
+              <button type="button" className={geometryOn ? 'on' : ''} data-tip="Треугольник перехвата, круг БЧ, вектор команды и ожидаемый промах прямо на сцене. Цвет следа виден всегда: перегрузка ракеты (n_req/n_lim) и оценка манёвра цели." onClick={onToggleGeometry}>
                 геометрия
               </button>
               {sc.aspect === 'free' && (
