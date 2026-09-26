@@ -28,6 +28,7 @@ export function FlightWorkspace({
   wendyCaption,
   silent,
   sceneIdle,
+  outcome,
   busy,
   done,
   log,
@@ -54,6 +55,8 @@ export function FlightWorkspace({
   wendyCaption: { text: string } | null
   silent: boolean
   sceneIdle: boolean
+  /** итог последнего живого прогона — сцене для финальной подписи промаха с CPA */
+  outcome: { hit: boolean; missM: number } | null
   busy: boolean
   done: string | null
   log: string[]
@@ -95,6 +98,7 @@ export function FlightWorkspace({
             cockpit={egg}
             cofly={cofly}
             silent={silent}
+            outcome={outcome}
             onFreeGeom={(p) => {
               set('free_tx', p.free_tx)
               set('free_ty', p.free_ty)

@@ -128,6 +128,8 @@ export function App() {
   const [log, setLog] = useState<string[]>(['Стенд готов. Нажмите «Пуск».'])
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState<string | null>(null)
+  /** итог последнего живого прогона для сцены: вердикт и наименьшее сближение (м) */
+  const [runOutcome, setRunOutcome] = useState<{ hit: boolean; missM: number } | null>(null)
   const [trainNote, setTrainNote] = useState('контур не обучен')
   const [trained, setTrained] = useState(isTrained())
   const [serverOnline, setServerOnline] = useState<boolean | null>(null)
@@ -782,6 +784,9 @@ export function App() {
     // вердикт «взяла/промах» берём из метрик (m.hit), а не из начала сводки:
     // в дуэли сводка начинается с «Ракета взяла» и текстовый тест давал промах при взятии
     hit?: boolean | null | (() => boolean | null),
+    // наименьшее сближение из метрик прогона — ту же цифру печатает вердикт,
+    // и финальная подпись сцены обязана показывать её, а не кадрный минимум
+    missM?: number | null | (() => number | null),
     // план «Кобры» — только для дуэли (её реплики рождаются из исхода боя двух мозгов)
     wendy?: WendyPlan | null,
   ) => {
@@ -836,6 +841,12 @@ export function App() {
       say(gotHit ? 'hit' : 'miss')
       buzz(gotHit ? HAPTIC.hit : HAPTIC.miss)
       setDone(sum)
+      // сцене нужен именно итог: у проигрыша по истечении боевой жизни терминального
+      // события в кадре нет, и без него финальная подпись зависала живой дистанцией
+      setRunOutcome({
+        hit: gotHit,
+        missM: Number((typeof missM === 'function' ? missM() : missM) ?? frames[frames.length - 1]?.miss ?? 0),
+      })
     }
     const finalPlan = shtrum ?? live?.shtrum() ?? null
     if (finalPlan?.final) showShtrum(finalPlan.final, he)
@@ -864,7 +875,7 @@ export function App() {
     lastFramesRef.current = frames
     const m = computeRunMetrics(frames, DEMO_SCENARIO.kill_radius_m)
     setLog((rows) => ['Демо-перехват (первый визит) — управление вернётся после показа.', ...rows].slice(0, 14))
-    void playFrames(frames, summaryOf(m), undefined, null, false, undefined, m.hit).then(() => {
+    void playFrames(frames, summaryOf(m), undefined, null, false, undefined, m.hit, m.miss).then(() => {
       if (!stop.current) setDemoBanner(true)
     })
   }
@@ -1027,6 +1038,7 @@ export function App() {
     let plan: ShtrumPlan | null = null
     let wendyPlan: WendyPlan | null = null
     let hitFinal: boolean | null = null
+    let missFinal: number | null = null
     let isDuelFinal = false
     const finalize = () => {
       if (!answer) return
@@ -1036,6 +1048,7 @@ export function App() {
       labRef.current.traj = sampleTraj(frames)
       const m = recordRun(frames, answer as unknown as Parameters<typeof recordRun>[1] | undefined)
       hitFinal = m.hit
+      missFinal = m.miss
       logFreeWindow(m)
       isDuelFinal = Boolean(answer.duel)
       const duelInfo = answer.duel
@@ -1099,7 +1112,7 @@ export function App() {
       done: () => finished,
       shtrum: () => plan,
       wendy: () => wendyPlan,
-    }, () => hitFinal)
+    }, () => hitFinal, () => missFinal)
     try {
       ws.close()
     } catch {
@@ -1119,6 +1132,7 @@ export function App() {
     stop.current = false
     setBusy(true)
     setDone(null)
+    setRunOutcome(null)
     setDuelVerdict(null)
     setFrame(null)
     setPlayback(null)
@@ -1204,6 +1218,7 @@ export function App() {
           he,
           undefined,
           m.hit,
+          m.miss,
           humorOn && duelInfo ? planWendy(frames, m, s, duelInfo) : null,
         )
         saveLab()
@@ -1221,7 +1236,7 @@ export function App() {
       labRef.current.traj = sampleTraj(frames)
       const m = recordRun(frames)
       logFreeWindow(m)
-      await playFrames(frames, summaryOf(m), undefined, humorOn ? planShtrum(frames, m, s, he) : null, he, undefined, m.hit)
+      await playFrames(frames, summaryOf(m), undefined, humorOn ? planShtrum(frames, m, s, he) : null, he, undefined, m.hit, m.miss)
       saveLab()
       labTick()
       maybeInstantReplay(myRunId, frames, m.hit, false)
@@ -1240,6 +1255,7 @@ export function App() {
     setSwarmRunning(true)
     setBusy(true)
     setDone(null)
+    setRunOutcome(null)
     if (!populationRef.current || populationRef.current.length !== swarmCfg.size) {
       populationRef.current = initPopulation(swarmCfg.size, 7)
       setLog((rows) => [`Рой выпущен: ${swarmCfg.size} мух (мозг + ПН)`, ...rows].slice(0, 14))
@@ -1970,6 +1986,7 @@ export function App() {
     setFrame(null)
     setPlayback(null)
     setDone(null)
+    setRunOutcome(null)
     setLog((rows) =>
       [
         `Обучение ${sc.brain === 'full' ? 'полного мозга' : sc.brain === 'connectome' ? 'коннектома' : 'схемы'} · шаг ${trainCfg.lr} · эпизодов ${trainCfg.episodes}…`,
@@ -2221,6 +2238,7 @@ export function App() {
       onLaunch={() => void run()}
       onStop={() => {
         stop.current = true
+        setRunOutcome(null)
         setShtrumCaption(null)
       }}
       day={day}
@@ -2278,6 +2296,7 @@ export function App() {
           wendyCaption={wendyCaption}
           silent={swarmRunning || playback?.race === true}
           sceneIdle={training}
+          outcome={runOutcome}
           busy={busy}
           done={done}
           log={log}
@@ -2360,6 +2379,7 @@ export function App() {
           onToggleGeometry={() => setGeometryOn((g) => !g)}
           sceneBadge={sceneBadge}
           silent={swarmRunning || playback?.race === true}
+          outcome={runOutcome}
           busy={busy}
           done={done}
           duelVerdict={duelVerdict}

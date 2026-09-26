@@ -165,6 +165,7 @@ export function DuelWorkspace({
   onToggleGeometry,
   sceneBadge,
   silent,
+  outcome,
   busy,
   done,
   duelVerdict,
@@ -191,6 +192,8 @@ export function DuelWorkspace({
   onToggleGeometry: () => void
   sceneBadge: string | null
   silent: boolean
+  /** итог последнего живого прогона — сцене для финальной подписи промаха с CPA */
+  outcome: { hit: boolean; missM: number } | null
   busy: boolean
   done: string | null
   duelVerdict: { result: 'missile' | 'evader' | null; tSurvived: number | null; fuse: boolean } | null
@@ -788,6 +791,7 @@ export function DuelWorkspace({
           sceneBadge={sceneBadge}
           cockpit={false}
           silent={silent}
+          outcome={outcome}
         />
         {shtrumCaption && (
           <div className="shtrum-caption">

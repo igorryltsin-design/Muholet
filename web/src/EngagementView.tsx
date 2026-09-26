@@ -324,6 +324,7 @@ export function EngagementView({
   cockpit,
   cofly,
   silent,
+  outcome,
   onFreeGeom,
 }: {
   frame: Frame | null
@@ -347,6 +348,10 @@ export function EngagementView({
   cofly?: 'm' | 'f' | null
   /** беззвучный режим: рой и его подрежимы — короткие циклы, фразы не успевают */
   silent?: boolean
+  /** итог завершённого живого прогона: взял или нет и наименьшее сближение (м).
+   *  Нужен потому, что у проигрыша по истечении боевой жизни терминального события
+   *  в кадре нет — без него финальная подпись зависала живой дистанцией («0 м») */
+  outcome?: { hit: boolean; missM: number } | null
   /** «свободная расстановка»: перетаскивание цели прямо в сцене (до прогона) */
   onFreeGeom?: (patch: { free_tx: number; free_ty: number; free_talt: number }) => void
 }) {
@@ -362,6 +367,7 @@ export function EngagementView({
   const cockpitOnRef = useRef(false)
   const coflyRef = useRef<'m' | 'f' | null>(null)
   const silentRef = useRef(false)
+  const outcomeRef = useRef<{ hit: boolean; missM: number } | null>(outcome ?? null)
   const freeGeomRef = useRef(onFreeGeom)
   frameRef.current = frame
   scRef.current = scenario
@@ -373,6 +379,7 @@ export function EngagementView({
   cockpitOnRef.current = cockpit ?? false
   coflyRef.current = cofly ?? null
   silentRef.current = silent ?? false
+  outcomeRef.current = outcome ?? null
   freeGeomRef.current = onFreeGeom
 
   useEffect(() => {
@@ -982,6 +989,10 @@ export function EngagementView({
       let event: string | null = null
       let aCmd: THREE.Vector3 | null = null
       let prog = 0
+      // веер траекторий: взял ли лучший бой и каково в нём наименьшее сближение —
+      // у проигрыша терминального события нет, а финальная подпись обязана быть
+      let bestHit: boolean | null = null
+      let bestMiss: number | null = null
       let rp: THREE.Vector3 | null = null // позиция ракеты-стажёра в демо-гонке
 
       if (pb && pb.results.length > 0) {
@@ -1009,6 +1020,8 @@ export function EngagementView({
         mv = to3(velAt(best.traj_m, prog))
         tv = to3(velAt(best.traj_t, prog))
         stamp = pb.startedAt
+        bestHit = best.hit
+        bestMiss = best.miss_m ?? null
         if (best.hit && prog >= 1) event = 'перехват'
       } else if (fr && !idleRef.current) {
         mp = to3(fr.missile)
@@ -1296,12 +1309,22 @@ export function EngagementView({
       const flyingNow = Boolean(!silentRef.current && !finalEvent && (pb ? pb.race && prog < 1 : fr && !idleRef.current))
       setBuzz(flyLoad, flyingNow)
       if (flyingNow && flyLoad > 0.78) say('overload')
-      // в финале промаха — явная подпись расстояния на отрезке «ракета—цель»
-      const missedEnd = Boolean(fr && (fr.event === 'промах' || fr.event === 'miss_pass'))
-      missLabel.spr.visible = missedEnd && fr !== null
-      if (missedEnd && fr) {
+      // в финале промаха — явная подпись наименьшего сближения на отрезке «ракета—цель».
+      // Прогон может кончиться и без терминального события (в дуэли цель уходит по
+      // истечении боевой жизни): тогда итог даёт проп `outcome` живого пуска или `hit`
+      // лучшего боя веера, иначе над парой висела бы залипшая живая дистанция
+      const endedNoKill = pb
+        ? prog >= 1 && bestHit === false
+        : outcomeRef.current !== null && !outcomeRef.current.hit && !idleRef.current
+      const missedEnd =
+        Boolean(fr && (fr.event === 'промах' || fr.event === 'miss_pass' || fr.event === 'отказ перехвата')) || endedNoKill
+      missLabel.spr.visible = missedEnd
+      if (missedEnd) {
+        // цифра та же, что в вердикте: итог прогона из метрик, а кадрный минимум —
+        // только пока прогон ещё идёт (исхода нет)
+        const cpa = pb ? bestMiss ?? fr?.miss ?? 0 : outcomeRef.current?.missM ?? fr?.miss ?? 0
         missLabel.spr.position.copy(mp.clone().lerp(tp, 0.5)).add(new THREE.Vector3(0, 0.18, 0))
-        missLabel.set(dayRef.current ? '#b03a22' : '#ff6a4a', `промах ${Math.round(fr.miss)} м`)
+        missLabel.set(dayRef.current ? '#b03a22' : '#ff6a4a', `промах · наименьшее ${Math.round(cpa)} м`)
       }
 
       los.geometry.setFromPoints([mp, tp])

@@ -91,8 +91,9 @@ def test_final_voice_follows_metrics_not_summary_prefix() -> None:
     assert "got ?? sum.startsWith('Перехват')" in app  # голос: метрика, текст — лишь фолбэк
     assert "hitFinal = m.hit" in app  # стрим-путь: честный hit из 'done'
     # POST и офлайн-фолбэк несут m.hit (виток 16: после hit добавился wendy-план,
-    # поэтому POST-вызов разбит построчно и «undefined, m.hit)» в нём не встречается)
-    assert "undefined, m.hit)" in app  # офлайн-фолбэк: одной строкой
+    # поэтому POST-вызов разбит построчно и «undefined, m.hit, …)» в нём не встречается;
+    # виток 21: рядом поехал m.miss — та же цифра CPA нужна финальной подписи сцены)
+    assert "undefined, m.hit, m.miss)" in app  # офлайн-фолбэк: одной строкой
     assert "undefined,\n          m.hit," in app  # POST: та же пара аргументов
     for f in ("web/src/App.tsx", "web/src/shell/FlightWorkspace.tsx"):
         src = (REPO / f).read_text(encoding="utf-8")
