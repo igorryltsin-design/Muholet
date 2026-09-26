@@ -1,0 +1,14 @@
+name: muholet
+
+services:
+  muholet:
+    platform: linux/amd64
+    image: muholet:latest
+    build:
+      context: .
+    container_name: muholet
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data # обученные мозги переживают перезапуск
+    restart: unless-stopped

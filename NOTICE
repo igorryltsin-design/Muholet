@@ -1,0 +1,18 @@
+Наведение — учебный стенд закона наведения.
+
+Коннектом Drosophila melanogaster (FlyWire / FAFB):
+  Dorkenwald et al., Nature 2024
+  Schlegel et al., Nature 2024
+  Nern et al., Nature 2024 (optic lobe cell types)
+
+Реальная проводка: скрытые слои коннектома собираются из публичных таблиц
+FlyWire FAFB v783 (proofread connections, Lin et al., Nature 2024; Zenodo
+10.5281/zenodo.10676866) скриптом tools/extract_subgraph.py → data/circuit_v1.npz.
+Веса блоков = реальные синаптические счётчики (со знаком по нейромедиатору),
+агрегированные на детерминированные группы базиса; популяции отобраны по
+опубликованным типам клеток (L1–L5, Tm/TmY, T4/T5, LC/LPLC, CX, Kenyon, DN).
+Лицензия данных: CC BY-NC-SA 4.0 — учебное некоммерческое использование.
+Исходные таблицы в репозиторий не копируются (data/raw/, ~870 МБ) — скачиваются
+отдельно; без circuit_v1.npz контур работает на literature-stub проводке.
+
+Это не ТТХ конкретного изделия.
