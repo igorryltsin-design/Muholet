@@ -1492,7 +1492,17 @@ export function EngagementView({
     }
     raf = requestAnimationFrame(tick)
 
+    // скрытая вкладка: rAF не крутится вхолостую — все тайминги завязаны на
+    // performance.now() напрямую (hitAt/age, pb.startedAt, lastInteract), так
+    // что пауза не требует пересчёта состояния при возврате
+    const onVisibility = () => {
+      if (document.hidden) cancelAnimationFrame(raf)
+      else raf = requestAnimationFrame(tick)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
       cancelAnimationFrame(raf)
       missLabel.spr.removeFromParent()
       distLabel.spr.removeFromParent()

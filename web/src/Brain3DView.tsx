@@ -597,7 +597,16 @@ export function Brain3DView({ frame, kind, day }: { frame: Frame | null; kind: B
     canvas.addEventListener('mousemove', onMove)
     canvas.addEventListener('mouseleave', onLeave)
 
+    // скрытая вкладка: мозг «спит» полностью, не только по частоте — импульсы
+    // и вращение облака не тратят кадры, пока вкладка не активна
+    const onVisibility = () => {
+      if (document.hidden) cancelAnimationFrame(raf)
+      else raf = requestAnimationFrame(tick)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
       cancelAnimationFrame(raf)
       ro.disconnect()
       canvas.removeEventListener('mousemove', onMove)
